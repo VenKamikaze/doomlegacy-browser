@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+#
+# Install a pinned Emscripten SDK, for the browser build of doomlegacy-browser.
+# Adapted from jfsw-browser's scripts/setup-emsdk.sh (same pins).
+#
+#   scripts/setup-emsdk.sh                  # installs into ~/.cache/doomlegacy-browser/emsdk
+#   EMSDK_DIR=/opt/emsdk scripts/setup-emsdk.sh
+#   source "$EMSDK_DIR/emsdk_env.sh"        # then: emcc --version
+#   scripts/setup-emsdk.sh --with-ports     # also seed the Emscripten SDL2 port
+#
+# Both the emsdk repository revision and the Emscripten version are pinned, so
+# every machine gets the same compiler. emsdk is fetched with git (never a GitHub
+# archive download, which some networks block); the toolchain binaries come from
+# storage.googleapis.com.
+#
+# The default EMSDK_DIR is outside the worktree ($XDG_CACHE_HOME or ~/.cache, then
+# doomlegacy-browser/emsdk) so that several worktrees share one install.
+#
+# EM_CACHE=DIR (optional): seed a private Emscripten cache instead of the emsdk's own.
+#
+# --with-ports (-sUSE_SDL=2, and -sUSE_OGG=1 -sUSE_VORBIS=1 for later music):
+# Emscripten fetches its ports from GitHub archive URLs, which some networks block
+# (the cloud container answers 403). The `emscripten-ports` branch of PORTS_REPO
+# (default: VenKamikaze/jfsw-browser, which pins the same emsdk) holds those
+# archives; this verifies each one's SHA-512 against the HASH in the emsdk's
+# tools/ports/<name>.py, unpacks it into $(em-config CACHE)/ports/<name>/ the way
+# Emscripten itself would, and writes the .emscripten_url marker, so Emscripten
+# finds the port up to date and downloads nothing. On an unblocked network it is
+# optional. It writes into Emscripten's cache without taking its lock, so do not
+# run it while an emcc build is running.
+#
+# Not seeded: SDL2_mixer (-sUSE_SDL_MIXER=2). That branch does not hold it, and
+# its archive URL is blocked here too. Doom Legacy needs it only for music
+# (HAVE_MIXER); sound effects go through plain SDL audio.
+set -euo pipefail
+
+EMSDK_COMMIT="d7b4130688bfa348392b921ab04015aa15c4f154"  # emscripten-core/emsdk, 2026-10-20
+EMSDK_VERSION="6.0.13"                                    # Emscripten release installed by that revision
+PORTS_REPO="${PORTS_REPO:-https://github.com/VenKamikaze/jfsw-browser.git}"
+
+EMSDK_DIR="${EMSDK_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/doomlegacy-browser/emsdk}"
+
+WITH_PORTS=0
+for arg in "$@"; do
+    case "$arg" in
+        --with-ports) WITH_PORTS=1 ;;
+        -h|--help) sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
+        *) echo "unknown option: $arg (see --help)" >&2; exit 2 ;;
+    esac
+done
+
+if [ ! -d "$EMSDK_DIR/.git" ]; then
+    mkdir -p "$EMSDK_DIR"
+    git init -q "$EMSDK_DIR"
+    git -C "$EMSDK_DIR" remote add origin https://github.com/emscripten-core/emsdk.git
+fi
+if [ "$(git -C "$EMSDK_DIR" rev-parse -q --verify HEAD 2>/dev/null || true)" != "$EMSDK_COMMIT" ]; then
+    git -C "$EMSDK_DIR" fetch -q --depth 1 origin "$EMSDK_COMMIT"
+    git -C "$EMSDK_DIR" checkout -q --force "$EMSDK_COMMIT"
+fi
+
+cd "$EMSDK_DIR"
+./emsdk install "$EMSDK_VERSION"
+./emsdk activate "$EMSDK_VERSION"
+
+if [ "$WITH_PORTS" = 1 ]; then
+    # name | file on the emscripten-ports branch | URL Emscripten fetches (its marker)
+    PORTS='
+sdl2|release-2.32.10.zip|https://github.com/libsdl-org/SDL/archive/release-2.32.10.zip
+ogg|libogg-1.3.5.zip|https://github.com/xiph/ogg/releases/download/v1.3.5/libogg-1.3.5.zip
+vorbis|libvorbis-1.3.7.zip|https://github.com/xiph/vorbis/releases/download/v1.3.7/libvorbis-1.3.7.zip
+'
+    # emsdk_env.sh clears EM_CACHE; put a caller's value back so that the ports are seeded
+    # into the cache the build will use.
+    # shellcheck disable=SC1091
+    cache="$(saved="${EM_CACHE:-}"; . "$EMSDK_DIR/emsdk_env.sh" >/dev/null 2>&1; [ -z "$saved" ] || export EM_CACHE="$saved"; em-config CACHE)"
+    emports="$EMSDK_DIR/upstream/emscripten/tools/ports"
+
+    pending=""
+    while IFS='|' read -r name file url; do
+        [ -n "$name" ] || continue
+        if [ "$(cat "$cache/ports/$name/.emscripten_url" 2>/dev/null || true)" != "$url" ]; then
+            pending="$pending $name"
+        fi
+    done <<< "$PORTS"
+
+    if [ -z "$pending" ]; then
+        echo "Emscripten ports already seeded in $cache/ports"
+    else
+        tmp="$(mktemp -d)"
+        trap 'rm -rf "$tmp"' EXIT
+        git init -q "$tmp/repo"
+        git -C "$tmp/repo" fetch -q --depth 1 "$PORTS_REPO" emscripten-ports
+        mkdir "$tmp/files"
+        git -C "$tmp/repo" archive --format=tar FETCH_HEAD | tar -x -C "$tmp/files"
+        mkdir -p "$cache/ports"
+        while IFS='|' read -r name file url; do
+            [ -n "$name" ] || continue
+            case " $pending " in *" $name "*) ;; *) continue ;; esac
+            want="$(sed -n "s/^HASH = '\([0-9a-f]\{128\}\)'.*/\1/p" "$emports/$name.py")"
+            have="$(sha512sum "$tmp/files/$file" | cut -d' ' -f1)"
+            if [ -z "$want" ] || [ "$want" != "$have" ]; then
+                echo "SHA-512 of $file does not match tools/ports/$name.py (the emsdk pin changed? refresh the emscripten-ports branch)" >&2
+                exit 1
+            fi
+            # Unpack exactly as Emscripten does (shutil.unpack_archive into a temporary
+            # directory, then a rename), and write its marker.
+            rm -rf "$cache/ports/$name.tmp" "$cache/ports/$name"
+            mkdir -p "$cache/ports/$name.tmp"
+            python3 -I -c 'import shutil, sys; shutil.unpack_archive(sys.argv[1], sys.argv[2])' "$tmp/files/$file" "$cache/ports/$name.tmp"
+            printf '%s\n' "$url" > "$cache/ports/$name.tmp/.emscripten_url"
+            mv "$cache/ports/$name.tmp" "$cache/ports/$name"
+            echo "seeded port $name from $file"
+        done <<< "$PORTS"
+    fi
+fi
+
+echo
+echo "emsdk $EMSDK_VERSION is installed in $EMSDK_DIR"
+echo "Use it with:  source \"$EMSDK_DIR/emsdk_env.sh\""

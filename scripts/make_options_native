@@ -1,0 +1,13 @@
+# Doom Legacy make options for the native Linux SDL2 build of doomlegacy-browser.
+# Used by scripts/build-native.sh (MAKE_OPTIONS=scripts/make_options_native).
+# Based on make_options_nix; see that file and README_compiling for the choices.
+MAKE_OPTIONS_PRESENT=1
+OS=LINUX
+SMIF=SDL
+SDL2=1
+HAVE_MIXER=1
+# make_options_nix defaults to -march=i686, which is wrong on x86_64.
+ARCH=
+HAVE_DLOPEN=1
+HAVE_LIBZIP=1
+HAVE_ZLIB=1

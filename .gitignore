@@ -1,0 +1,17 @@
+# Build output (scripts/build-native.sh, and later the wasm build)
+/build/
+
+# Test IWADs and demos (scripts/fetch-test-data.sh). Never commit game data.
+/testdata/
+
+# What the upstream Makefile creates when run in-tree without BUILD=
+/bin/
+/objs/
+/dep/
+/make_options
+
+*.o
+*.a
+*.swp
+*~
+__pycache__/
