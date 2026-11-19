@@ -1,0 +1,3 @@
+[submodule "ext/vnet"]
+	path = ext/vnet
+	url = https://github.com/VenKamikaze/vnet.git
