@@ -39,7 +39,7 @@
 //
 void R_DrawColumn_32 (void)
 {
-    unsigned int heightmask = dc_texheight - 1;
+    int heightmask = dc_texheight - 1;  // signed: -1 when no wrap (dc_texheight = 0)
     int     count;
     byte *  dest;  // within screen buffer
     fixed_t frac;

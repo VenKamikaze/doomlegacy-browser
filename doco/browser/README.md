@@ -5,14 +5,14 @@ The goal is Doom Legacy playable in a browser (Emscripten/WASM), **with its musi
 **Read first:**
 - [`survey.md`](survey.md): the feasibility survey of 19 Nov 2026 (copied as delivered), which chose Doom Legacy and lists the seams, risks and file:line refs.
 - [`building.md`](building.md): set-up, native build, test data, headless run and Emscripten.
-- [`bugs.md`](bugs.md): upstream bugs and quirks found so far. **L1 crashes every x86_64 build as soon as a sprite is drawn.**
+- [`bugs.md`](bugs.md): upstream bugs and quirks found so far. L1 (an x86_64 crash whenever a sprite is drawn) is fixed by F1.
 
 ## Status
 
 | # | Work | Status |
 |---|---|---|
 | — | Repository tidy-up and environment set-up | done, 19 Nov 2026 |
-| F1 | Fix `bugs.md` L1, the sprite-column out-of-bounds read (crash on x86_64) | not written; blocks every native baseline run |
+| F1 | [Sprites crash the 24/32 bpp column drawer on 64-bit builds](F1-sprite-column-oob.md) (`bugs.md` L1) | done |
 | M1 | OPL music (D8, Q5 c): Doom's DMX OPL sound from the IWAD's `GENMIDI`, natively and in the browser | not written |
 | 00 | Baseline, as the survey proposes: native and wasm builds without `-ffast-math`, a per-tic state hash to compare native against wasm, a hot-join test, and whether the SVN maintainer accepts patches | not written |
 
