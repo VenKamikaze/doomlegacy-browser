@@ -32,7 +32,7 @@ Stop the segfault that every x86_64 build hits the first time the player's weapo
 
 ## Outcome
 
-Status: **review** (an independent review is in progress, then the merge into `claudeai`).
+Status: **done** (merged into `claudeai` with `--no-ff`, 19 Nov 2026).
 
 **What landed**
 
@@ -71,3 +71,21 @@ The repository path is a guess: the HTTPS form of it returned 404 from here, and
 
 - The 16 bpp drawer masks sprites with `& 127` (`src/r_draw16.c:96`), as vanilla Doom did. It reads a different byte from the 8/24/32 bpp drawers on the same frame (`bugs.md` L11). This is cosmetic.
 - An ASan build with `-fsanitize-recover=address` and `ASAN_OPTIONS=halt_on_error=0` would list every memory error in one run. That belongs with the baseline brief, before the native-against-wasm comparison.
+
+### Review
+
+An independent read-only reviewer gave the verdict **merge**, with no blocking findings. Its findings, which I re-checked against the code:
+
+- **The fix is correct in both paths.** Sprites always take the power-of-two path (`0 & -1 = 0`), and the index there is now a signed −1. The odd-height path only tests `heightmask` and never indexes with it.
+- **No other drawer has the unsigned mask.**
+  - `R_DrawColumn_8` and the 8 bpp translucent drawers use `int` (`r_draw8.c:144`, `:677`, `:815`). The sky drawers and the 16 bpp drawer use int constants.
+  - The span drawers mask with small positive masks.
+  - The x86 assembly (`tmap.s`) builds only for 32-bit.
+  - The drawers chosen at run time (`screen.c:307-442`) are all covered.
+- **`dc_source[-1]` is the post's leading pad byte**, the same byte a 32-bit build reads (`r_defs.h:979-992`). Posts that Doom Legacy builds itself set it to 0 (`r_data.c:381`, `:1309`).
+- **Rendering changes only where `dc_texheight <= 0`:** sprites, coronas and splats (`r_segs.c:841`). Walls and sky are unchanged.
+- **Two bugs already in the code, recorded rather than fixed here:**
+  - `R_DrawColumn_24`'s odd-height path lacks Boom's negative-`frac` wrap (`bugs.md` L12, 24 bpp only).
+  - The 16 bpp `& 127` read can go past a short post (L11, refined).
+  - Neither crashes or stops play, so under the bugs policy neither gets a brief.
+- **Nit:** the trailing comment on the declaration is a little long. It is kept.
