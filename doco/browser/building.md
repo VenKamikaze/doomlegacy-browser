@@ -80,7 +80,7 @@ By default it plays `testdata/demos/fd1demo1.lmp` on `freedoom1.wad` with `-play
 - `--iwad`, `--demo FILE|none` and `--bin` choose what runs, for example `--iwad testdata/doom1.wad --demo testdata/demos/d1demo1.lmp`;
 - arguments after `--` go to the game, for example `-- -warp 1 1`.
 
-**State on 19 Nov 2026: the x86_64 build segfaults** as soon as the player's weapon sprite is drawn, with a demo or a `-warp`, on all three IWADs, `doom1.wad` included. See [`bugs.md`](bugs.md) L1. Until that is fixed, the headless run ends with status 139 after about 2 s. The title loop alone runs, and is stopped by the timeout.
+Since F1, the headless run plays the demo to its end and exits 0 on all three IWADs: 63-206 s per demo, in real time. Before F1, every x86_64 build segfaulted as soon as a sprite was drawn (`bugs.md` L1). `tests/sprite-column-oob.sh` is the regression test.
 
 Quirks the script works around (details in [`bugs.md`](bugs.md)):
 - `-playdemo` takes only an external file, adds `.lmp` if there is no extension, and first looks the name up as a lump.
