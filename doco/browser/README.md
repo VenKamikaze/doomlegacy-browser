@@ -13,6 +13,7 @@ The goal is Doom Legacy playable in a browser (Emscripten/WASM), **with its musi
 |---|---|---|
 | — | Repository tidy-up and environment set-up | done, 19 Nov 2026 |
 | F1 | Fix `bugs.md` L1, the sprite-column out-of-bounds read (crash on x86_64) | not written; blocks every native baseline run |
+| M1 | OPL music (D8, Q5 c): Doom's DMX OPL sound from the IWAD's `GENMIDI`, natively and in the browser | not written |
 | 00 | Baseline, as the survey proposes: native and wasm builds without `-ffast-math`, a per-tic state hash to compare native against wasm, a hot-join test, and whether the SVN maintainer accepts patches | not written |
 
 ## Settled decisions
@@ -26,7 +27,7 @@ Don't reopen these inside a brief. If one proves wrong, stop and ask the user.
 - **D5. The software renderer comes first.** Build without `HWRENDER` for wasm.
 - **D6. The blocking loops stay**, with ASYNCIFY yields (`survey.md` lists them).
 - **D7. The page fetches the data**, caches it in IndexedDB, and puts it on the game's WAD search path.
-- **D8. Music is in the first release** (the user, 19 Nov 2026: "Bobby Prince's music is an iconic part of doom"). Sound effects and music both, in the browser and natively. How the MIDI is synthesised is Q5.
+- **D8. Music is in the first release** (the user, 19 Nov 2026: "Bobby Prince's music is an iconic part of doom"). Sound effects and music both, in the browser and natively. The music is played by **OPL3 emulation driven by the IWAD's own `GENMIDI` instrument bank** (Q5, option c): the DOS Sound Blaster/AdLib sound, with no extra data to download.
 - **D9. Test data is Freedoom 0.13.0 and the Doom shareware 1.9 `DOOM1.WAD`**, both fetched and verified by `scripts/fetch-test-data.sh`. Game data is never committed. Which data the public page offers by default is the user's call.
 - **D10. Toolchain:** Emscripten 6.0.13 with the jfsw-browser pins; ports come from this repo's `emscripten-ports` branch (SDL2, SDL2_mixer, Ogg, Vorbis).
 - **D11. Upstream-friendly changes:** new files where possible, `#ifdef __EMSCRIPTEN__`, no reformatting of upstream code.
@@ -53,9 +54,23 @@ Don't reopen these inside a brief. If one proves wrong, stop and ask the user.
 - **Q3. Music:** in the first release (D8). The SDL2_mixer port is on the `emscripten-ports` branch. Its zip was rebuilt from the git tag so that it matches the port's SHA-512 byte for byte; the branch README has the commands.
 - **Q4. Upstream fixes:** jfsw's pattern (see Git).
 
-## Open questions
+## Q5. How the music is synthesised: OPL3 emulation (the user, 19 Nov 2026: "Go with c")
 
-- **Q5. How is the music synthesised?** Doom Legacy converts the MUS lumps to MIDI (`qmus2mid.c`) and plays them through SDL_mixer (`sdl/i_sound.c:703`, `:850`). In the browser, SDL_mixer's MIDI is its built-in Timidity, which needs instrument data at run time. There are three ways to provide it:
-  - **(a) Timidity with a free GUS patch set** (such as FreePats). Smallest change; how it sounds depends on the patch set.
-  - **(b) FluidSynth with a General MIDI SoundFont** (FluidR3_GM is MIT). This is closest to the Roland Sound Canvas arrangement many players know. It is a new library to port, and adds a 100+ MB SoundFont, or a smaller one.
-  - **(c) OPL3 emulation** (Nuked OPL3 or libADLMIDI, both LGPL) driven by the IWAD's own `GENMIDI` instrument bank. That is the DOS Sound Blaster / AdLib sound, with **no extra data**: `DOOM1.WAD`, `freedoom1.wad` and `freedoom2.wad` all ship `GENMIDI` (11,908 bytes). It needs a new music backend in Doom Legacy.
+Doom Legacy converts the MUS lumps to MIDI (`qmus2mid.c`) and plays them through SDL_mixer (`sdl/i_sound.c:703`, `:850`). Instead of SDL_mixer's own MIDI player (Timidity, which needs instrument patches), the music goes through an OPL3 emulator, using the instrument bank in the IWAD's `GENMIDI` lump, the way DOS Doom's DMX library drove a Sound Blaster or AdLib card. `DOOM1.WAD`, `freedoom1.wad` and `freedoom2.wad` all ship `GENMIDI` (11,908 bytes each).
+
+The options that were not chosen were Timidity with a GUS patch set (a), and FluidSynth with a General MIDI SoundFont (b, the Sound Canvas sound, with a 100+ MB SoundFont). Either could be added later as an option.
+
+**Likely source** (checked 19 Nov 2026 at chocolate-doom `a2dfd51`; to be confirmed by the brief). Chocolate Doom's OPL music player is a faithful re-implementation of DMX's OPL driver:
+- `src/i_oplmusic.c` (1,906 lines): GENMIDI parsing, voice allocation, MIDI events to OPL registers;
+- `src/midifile.c` (838 lines): MIDI parser;
+- `opl/opl.c`, `opl/opl_sdl.c`, `opl/opl_queue.c`: the OPL interface and SDL output. `opl_sdl.c` mixes into SDL_mixer's output with `Mix_QuerySpec` and a mixer callback, so it fits Doom Legacy's `HAVE_MIXER` build;
+- `opl/opl3.c` (1,938 lines): the Nuked OPL3 emulator.
+
+Licences: `opl3.c` is LGPL 2.1 or later, and the rest is GPL 2 or later. All of it is compatible with Doom Legacy's GPL 2 or later.
+
+Questions for the brief:
+- the seam with Doom Legacy's music API (`I_PlaySong`, `I_RegisterSong` and friends in `sdl/i_sound.c`), and whether MIDI from `qmus2mid.c` or the raw MUS data is the better input;
+- `opl_sdl.c` uses `SDL_mutex`, which needs checking in a wasm build without threads;
+- the CPU cost of Nuked OPL3 in wasm (it is cycle-accurate; DOSBox's DBOPL is the cheaper alternative);
+- the browser's audio-unlock gesture;
+- a native A/B against Chocolate Doom playing the same track.

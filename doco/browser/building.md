@@ -100,7 +100,7 @@ source ~/.cache/doomlegacy-browser/emsdk/emsdk_env.sh
 
 - This installs emsdk revision `d7b4130` with Emscripten **6.0.13**, the same pins as jfsw-browser, into `~/.cache/doomlegacy-browser/emsdk` (override with `EMSDK_DIR`). The download is about 300 MB from `storage.googleapis.com`.
 - `--with-ports` seeds the **SDL2, SDL2_mixer, Ogg and Vorbis** ports from this repo's `emscripten-ports` branch (override with `PORTS_REPO`), after checking each SHA-512 against the pinned emsdk. That is needed because GitHub archive URLs, where Emscripten would download them, answer 403 in the cloud container.
-- SDL2_mixer with MIDI and Ogg: `-sUSE_SDL=2 -sUSE_SDL_MIXER=2 -sSDL2_MIXER_FORMATS='["mid","ogg"]'`. A test program, built from an empty `EM_CACHE` seeded by the script, links in 21 s with no download and prints `SDL_mixer 2.8.0, Mix_Init(MID|OGG) -> 0x30`. The `mid` format is SDL_mixer's built-in Timidity, which needs instrument patches at run time (see Q5 in the README).
+- SDL2_mixer with MIDI and Ogg: `-sUSE_SDL=2 -sUSE_SDL_MIXER=2 -sSDL2_MIXER_FORMATS='["mid","ogg"]'`. A test program, built from an empty `EM_CACHE` seeded by the script, links in 21 s with no download and prints `SDL_mixer 2.8.0, Mix_Init(MID|OGG) -> 0x30`. The `mid` format is SDL_mixer's built-in Timidity, which needs instrument patches at run time; the project plays music through OPL3 emulation instead (README, Q5), so `mid` is probably not needed in the end.
 
 **Smoke checks (19 Nov 2026):**
 - vnet: all 13 `ext/vnet/src/*.c` compile with no warnings under both `gcc` and `emcc`, with `-std=c11 -Wall -Wextra -D_POSIX_C_SOURCE=200809L -Iext/vnet/include -Iext/vnet/src`.
