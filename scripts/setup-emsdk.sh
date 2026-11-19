@@ -7,7 +7,7 @@
 #   scripts/setup-emsdk.sh                  # installs into ~/.cache/doomlegacy-browser/emsdk
 #   EMSDK_DIR=/opt/emsdk scripts/setup-emsdk.sh
 #   source "$EMSDK_DIR/emsdk_env.sh"        # then: emcc --version
-#   scripts/setup-emsdk.sh --with-ports     # also seed the Emscripten SDL2 port
+#   scripts/setup-emsdk.sh --with-ports     # also seed the Emscripten ports (SDL2, SDL2_mixer, Ogg, Vorbis)
 #
 # Both the emsdk repository revision and the Emscripten version are pinned, so
 # every machine gets the same compiler. emsdk is fetched with git (never a GitHub
@@ -19,25 +19,23 @@
 #
 # EM_CACHE=DIR (optional): seed a private Emscripten cache instead of the emsdk's own.
 #
-# --with-ports (-sUSE_SDL=2, and -sUSE_OGG=1 -sUSE_VORBIS=1 for later music):
+# --with-ports (-sUSE_SDL=2, -sUSE_SDL_MIXER=2, -sUSE_OGG=1, -sUSE_VORBIS=1):
 # Emscripten fetches its ports from GitHub archive URLs, which some networks block
 # (the cloud container answers 403). The `emscripten-ports` branch of PORTS_REPO
-# (default: VenKamikaze/jfsw-browser, which pins the same emsdk) holds those
-# archives; this verifies each one's SHA-512 against the HASH in the emsdk's
+# (default: this repository, VenKamikaze/doomlegacy-browser) holds those archives; this verifies each one's SHA-512 against the HASH in the emsdk's
 # tools/ports/<name>.py, unpacks it into $(em-config CACHE)/ports/<name>/ the way
 # Emscripten itself would, and writes the .emscripten_url marker, so Emscripten
 # finds the port up to date and downloads nothing. On an unblocked network it is
 # optional. It writes into Emscripten's cache without taking its lock, so do not
 # run it while an emcc build is running.
 #
-# Not seeded: SDL2_mixer (-sUSE_SDL_MIXER=2). That branch does not hold it, and
-# its archive URL is blocked here too. Doom Legacy needs it only for music
-# (HAVE_MIXER); sound effects go through plain SDL audio.
+# SDL2_mixer's MIDI support (-sSDL2_MIXER_FORMATS='["mid"]') is its built-in
+# Timidity, which needs no further port, but needs instrument patches at run time.
 set -euo pipefail
 
 EMSDK_COMMIT="d7b4130688bfa348392b921ab04015aa15c4f154"  # emscripten-core/emsdk, 2026-10-20
 EMSDK_VERSION="6.0.13"                                    # Emscripten release installed by that revision
-PORTS_REPO="${PORTS_REPO:-https://github.com/VenKamikaze/jfsw-browser.git}"
+PORTS_REPO="${PORTS_REPO:-https://github.com/VenKamikaze/doomlegacy-browser.git}"
 
 EMSDK_DIR="${EMSDK_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/doomlegacy-browser/emsdk}"
 
@@ -70,6 +68,7 @@ if [ "$WITH_PORTS" = 1 ]; then
 sdl2|release-2.32.10.zip|https://github.com/libsdl-org/SDL/archive/release-2.32.10.zip
 ogg|libogg-1.3.5.zip|https://github.com/xiph/ogg/releases/download/v1.3.5/libogg-1.3.5.zip
 vorbis|libvorbis-1.3.7.zip|https://github.com/xiph/vorbis/releases/download/v1.3.7/libvorbis-1.3.7.zip
+sdl2_mixer|release-2.8.0.zip|https://github.com/libsdl-org/SDL_mixer/archive/release-2.8.0.zip
 '
     # emsdk_env.sh clears EM_CACHE; put a caller's value back so that the ports are seeded
     # into the cache the build will use.

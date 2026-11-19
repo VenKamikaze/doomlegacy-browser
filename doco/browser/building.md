@@ -5,7 +5,7 @@ Every command runs from the repository root. Checked on Ubuntu 24.04 (the cloud 
 ## 1. Clone
 
 ```bash
-git clone --recurse-submodules https://github.com/VenKamikaze/doomlegacy-browser
+git clone --recurse-submodules -b claudeai https://github.com/VenKamikaze/doomlegacy-browser
 ```
 
 In an existing clone, `git submodule update --init` fetches `ext/vnet` (pinned to `v0.5.0`, `8572c74`).
@@ -45,14 +45,22 @@ Running `make` in-tree with no options stops after writing a `make_options` file
 scripts/fetch-test-data.sh
 ```
 
-This downloads Freedoom 0.13.0 from its GitHub release and checks the zip and both WADs against pinned SHA-256 values. It writes:
-- `testdata/freedoom1.wad` (detected as "Ultimate FreeDoom");
-- `testdata/freedoom2.wad` (detected as "FreeDoom");
-- the demo lumps, as `testdata/demos/fd{1,2}demo{1..4}.lmp`.
+This downloads and verifies two sets of IWADs, then extracts their demo lumps.
 
-`testdata/` is git-ignored, and a second run downloads nothing. `--from-zip FILE` uses a local copy of the zip; `--dest DIR` writes somewhere else.
+| File | Source | Checked against |
+|---|---|---|
+| `testdata/freedoom1.wad` ("Ultimate FreeDoom"), `testdata/freedoom2.wad` ("FreeDoom") | Freedoom 0.13.0 GitHub release zip | SHA-256 of the zip and of each WAD, recorded on first download (Freedoom publishes none) |
+| `testdata/doom1.wad` ("Doom shareware", 1.9) | `https://www.jbserver.com/downloads/games/doom/misc/shareware/doom1.wad.zip` | the published MD5 and SHA-1 ([DoomWiki](https://doomwiki.org/wiki/DOOM1.WAD)), plus SHA-256 of the zip and the WAD |
+| `testdata/demos/fd{1,2}demo{1..4}.lmp`, `testdata/demos/d1demo{1..3}.lmp` | the `DEMOn` lumps of those WADs | (taken from verified WADs) |
 
-Freedoom is BSD-licensed and may be redistributed, so it can also be served by the browser build. The shareware `DOOM1.WAD` is not fetched: id's `doom19s.zip` packs it in a PKLITE self-extractor. A `DOOM1.WAD` of your own can go in `testdata/`.
+- `testdata/` is git-ignored, and a second run downloads nothing.
+- On any mismatch the script exits 1 and leaves no unverified file behind. A bad WAD that is already there is deleted.
+- Options:
+  - `--only freedoom|doom1` fetches one set;
+  - `--freedoom-zip FILE` and `--doom1-zip FILE` use local copies of the zips;
+  - `--dest DIR` writes somewhere else.
+
+Freedoom is BSD-licensed. The shareware WAD may be redistributed unmodified. Which data the public page offers is the user's call (D9).
 
 `scripts/wadlump.py list|extract` lists or extracts WAD lumps (run it with `python3 -I`).
 
@@ -65,20 +73,20 @@ scripts/run-headless.sh
 The script runs the game:
 - with `SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy`;
 - with `-nosound -nomusic -noendtext`;
-- in a temporary `-home` that is deleted afterwards (`--home DIR` keeps one);
+- in a temporary `-home` that is deleted afterwards (`--home DIR` keeps one), which is also its working directory: the game writes `log.txt` there, and the demo is copied in;
 - under a timeout (`--timeout SECS`, default 120; exit status 124 on timeout).
 
-By default it plays `testdata/demos/fd1demo1.lmp` with `-playdemo`. At the end of the demo the game quits by itself with status 0 (`G_CheckDemoStatus`: `singledemo` → `I_Quit`, `src/g_game.c:4602`). Options:
-- `--iwad`, `--demo FILE|none` and `--bin` choose what runs;
+By default it plays `testdata/demos/fd1demo1.lmp` on `freedoom1.wad` with `-playdemo`. At the end of the demo the game quits by itself with status 0 (`G_CheckDemoStatus`: `singledemo` → `I_Quit`, `src/g_game.c:4602`). Options:
+- `--iwad`, `--demo FILE|none` and `--bin` choose what runs, for example `--iwad testdata/doom1.wad --demo testdata/demos/d1demo1.lmp`;
 - arguments after `--` go to the game, for example `-- -warp 1 1`.
 
-**State on 19 Nov 2026: the x86_64 build segfaults** as soon as the player's weapon sprite is drawn, with a demo or a `-warp`, on both IWADs. See [`bugs.md`](bugs.md) L1. Until that is fixed, the headless run ends with status 139 after about 2 s. The title loop alone runs, and is stopped by the timeout.
+**State on 19 Nov 2026: the x86_64 build segfaults** as soon as the player's weapon sprite is drawn, with a demo or a `-warp`, on all three IWADs, `doom1.wad` included. See [`bugs.md`](bugs.md) L1. Until that is fixed, the headless run ends with status 139 after about 2 s. The title loop alone runs, and is stopped by the timeout.
 
 Quirks the script works around (details in [`bugs.md`](bugs.md)):
 - `-playdemo` takes only an external file, adds `.lmp` if there is no extension, and first looks the name up as a lump.
 - The demo name is cut at 32 bytes.
 
-So the script runs the game from the demo's directory and passes the bare file name. The demo files have short names that can't match a lump.
+So the script copies the demo into the game's working directory and passes the bare file name. The demo files have short names that can't match a lump.
 
 ## 6. Emscripten
 
@@ -91,13 +99,13 @@ source ~/.cache/doomlegacy-browser/emsdk/emsdk_env.sh
 ```
 
 - This installs emsdk revision `d7b4130` with Emscripten **6.0.13**, the same pins as jfsw-browser, into `~/.cache/doomlegacy-browser/emsdk` (override with `EMSDK_DIR`). The download is about 300 MB from `storage.googleapis.com`.
-- `--with-ports` seeds the SDL2, Ogg and Vorbis ports from jfsw-browser's `emscripten-ports` branch (override with `PORTS_REPO`), after checking each SHA-512 against the pinned emsdk. That is needed because GitHub archive URLs, where Emscripten would download them, answer 403 in the cloud container.
-- **SDL2_mixer is not seeded.** No mirror holds it yet, so `-sUSE_SDL_MIXER=2` would try a blocked download. It is needed only for music (`HAVE_MIXER`); sound effects use plain SDL audio (`src/sdl/i_sound.c:21-33`).
+- `--with-ports` seeds the **SDL2, SDL2_mixer, Ogg and Vorbis** ports from this repo's `emscripten-ports` branch (override with `PORTS_REPO`), after checking each SHA-512 against the pinned emsdk. That is needed because GitHub archive URLs, where Emscripten would download them, answer 403 in the cloud container.
+- SDL2_mixer with MIDI and Ogg: `-sUSE_SDL=2 -sUSE_SDL_MIXER=2 -sSDL2_MIXER_FORMATS='["mid","ogg"]'`. A test program, built from an empty `EM_CACHE` seeded by the script, links in 21 s with no download and prints `SDL_mixer 2.8.0, Mix_Init(MID|OGG) -> 0x30`. The `mid` format is SDL_mixer's built-in Timidity, which needs instrument patches at run time (see Q5 in the README).
 
 **Smoke checks (19 Nov 2026):**
 - vnet: all 13 `ext/vnet/src/*.c` compile with no warnings under both `gcc` and `emcc`, with `-std=c11 -Wall -Wextra -D_POSIX_C_SOURCE=200809L -Iext/vnet/include -Iext/vnet/src`.
 - Game sources: `emcc -sUSE_SDL=2 -DSDL2 -DSMIF_SDL -DLINUX -c` on `src/*.c src/sdl/*.c`, as the survey reported:
   - unmodified, 11 of 110 compile: the `strupr`/`strlwr` prototypes in `doomtype.h:183-186` clash with Emscripten's `compat/string.h`;
   - with that guard extended to `!defined(__EMSCRIPTEN__)` (tried on a scratch copy only), 100 of 110 compile;
-  - the other 10 are the 6 files included into other files (`r_draw8/16/24/32`, `p_henemy`, `p_hpspr`) and 4 that need build settings (`i_tcp.c`: IPX; `v_video.c`, `w_wad.c`: `HWRENDER` symbols; `sdl/i_sound.c`: `HAVE_MIXER`).
+  - the other 10 are the 6 files included into other files (`r_draw8/16/24/32`, `p_henemy`, `p_hpspr`) and 4 that need build settings (`i_tcp.c`: IPX; `v_video.c`, `w_wad.c`: `HWRENDER` symbols; `sdl/i_sound.c`: `HAVE_MIXER`, now available as a port).
 - No wasm build is wired up yet. That is the first brief's job.

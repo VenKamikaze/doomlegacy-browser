@@ -20,8 +20,9 @@
 #   --home DIR      use DIR as the game's -home (kept); default: a temporary
 #                   directory, deleted afterwards
 #
-# The game runs with its working directory set to the demo's directory (or the
-# repository root with --demo none), so use absolute paths in extra arguments.
+# The game runs with its working directory set to its home directory, where it
+# also writes log.txt; the demo is copied there. Use absolute paths in extra
+# arguments.
 # Sets SDL_VIDEODRIVER=dummy and SDL_AUDIODRIVER=dummy, passes -nosound -nomusic
 # -noendtext, and returns the game's own exit status (124 on timeout).
 # Fails early (status 2) if the binary, IWAD or demo is missing: run
@@ -56,8 +57,8 @@ args=(-iwad "$iwad" -nosound -nomusic -noendtext)
 if [ "$demo" != none ]; then
     [ -f "$demo" ] || { echo "no demo at $demo (run scripts/fetch-test-data.sh)" >&2; exit 2; }
     # g_game.c keeps the demo name in a 32-byte buffer (DEMONAME_LEN) and silently
-    # truncates longer paths, so run from the demo's directory with a bare name.
-    demo_dir="$(cd "$(dirname "$demo")" && pwd)"
+    # truncates longer paths, so the demo is copied into the working directory and
+    # passed by its bare name.
     demo_name="$(basename "$demo")"
     if [ "${#demo_name}" -gt 32 ]; then
         echo "demo file name longer than 32 bytes, which the game truncates: $demo_name" >&2
@@ -75,8 +76,10 @@ if [ -z "$home" ]; then
 else
     mkdir -p "$home"
 fi
+home="$(cd "$home" && pwd)"
 
-cd "${demo_dir:-$root}"
+[ "$demo" = none ] || cp "$demo" "$home/$demo_name"
+cd "$home"
 # timeout(1) forwards INT/TERM/HUP to the game, so a Ctrl-C stops it too.
 status=0
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy DOOMWADDIR="$(dirname "$iwad")" \

@@ -15,12 +15,12 @@ Upstream's own readme is [`README`](README), and its documentation is in [`docs/
 | `scripts/` | Set-up, build, test-data and headless-run scripts for this port (`README.rst` and `release.sh` are upstream's) |
 | `doco/browser/` | Briefs, the feasibility survey, building notes and bugs found |
 
-`main` holds the pristine extract of the two release archives (`b1daf91`).
+Branches: `claudeai` is the integration branch, `browser/NN-*` are briefs, `fix/*` are upstream-ready fixes from `main`, which holds the pristine extract of the two release archives (`b1daf91`), and `emscripten-ports` holds the Emscripten port archives. See [`doco/browser/README.md`](doco/browser/README.md#git).
 
 ## Quick start (native, Linux)
 
 ```bash
-git clone --recurse-submodules https://github.com/VenKamikaze/doomlegacy-browser
+git clone --recurse-submodules -b claudeai https://github.com/VenKamikaze/doomlegacy-browser
 ```
 
 ```bash
@@ -31,4 +31,4 @@ See [`doco/browser/building.md`](doco/browser/building.md) for the details, Emsc
 
 ## Licence
 
-GPL v2 or later (see [`LICENSE`](LICENSE) and `docs/LICENSE.txt`). vnet is MIT. Freedoom, used as test data and never committed, is BSD-3-Clause.
+GPL v2 or later (see [`LICENSE`](LICENSE) and `docs/LICENSE.txt`). vnet is MIT. The test data (Freedoom, BSD-3-Clause, and the Doom shareware `DOOM1.WAD`) is downloaded by `scripts/fetch-test-data.sh` and never committed.
