@@ -2,6 +2,8 @@
 
 The goal is Doom Legacy playable in a browser (Emscripten/WASM), **with its music**, and with multiplayer over [vnet](https://github.com/VenKamikaze/vnet) `v0.5.0`. Players host or join by room code (joining a game in progress included), and native players can join the same rooms. This is the same result [jfsw-browser](https://github.com/VenKamikaze/jfsw-browser) reached for Shadow Warrior; its `doco/browser/` is the model for these notes and briefs.
 
+**Starting a fresh coordinator session?** Point it at [`PROMPT.md`](PROMPT.md). Its §0 is the hand-off.
+
 **Read first:**
 - [`survey.md`](survey.md): the feasibility survey of 19 Nov 2026 (copied as delivered), which chose Doom Legacy and lists the seams, risks and file:line refs.
 - [`building.md`](building.md): set-up, native build, test data, headless run and Emscripten.
