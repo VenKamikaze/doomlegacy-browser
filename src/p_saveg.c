@@ -2011,7 +2011,7 @@ void P_ArchiveThinkers(void)
                 diff1 |= MD_TFLAGS;
             if (mobj->pursuecount || mobj->strafecount)
                 diff1 |= MD_MBFCOUNT;
-            if (mobj->tipcount || mobj->dropoffz < mobj->floorz)
+            if (mobj->tipcount || mobj->dropoffz != mobj->floorz)
                 diff1 |= MD_MBFTIP;
             if (mobj->lastenemy)
                 diff1 |= MD_MBF_LASTENEMY;
