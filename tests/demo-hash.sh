@@ -133,8 +133,10 @@ one() {
 demos=()
 for d in "$root"/testdata/demos/*.lmp; do
     [ -f "$d" ] || continue
-    [ -s "$d" ] || { echo "empty demo file $d (scripts/fetch-test-data.sh)" >&2; exit 2; }
-    basename "$d" .lmp | grep -Eq "$only" && demos+=("$d")
+    if basename "$d" .lmp | grep -Eq "$only"; then
+        [ -s "$d" ] || { echo "empty demo file $d (scripts/fetch-test-data.sh)" >&2; exit 2; }
+        demos+=("$d")
+    fi
 done
 [ ${#demos[@]} -gt 0 ] || { echo "no demos match '$only' (scripts/fetch-test-data.sh)" >&2; exit 2; }
 

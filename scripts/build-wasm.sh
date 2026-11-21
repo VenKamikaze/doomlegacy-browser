@@ -32,6 +32,9 @@ case "$(emcc --version | head -1)" in
     *) echo "build-wasm: expected Emscripten 6.0.13, got: $(emcc --version | head -1)" >&2; exit 1 ;;
 esac
 
+case "${1:-}" in
+    -h|--help) sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
+esac
 cd "$root"
 jobs=(-j4)
 for a in "$@"; do case "$a" in -j*) jobs=() ;; esac; done

@@ -50,8 +50,8 @@ args+=("${extra[@]}")
 mkdir -p "$build"
 # Objects built with other flags must not be reused: a change of --fast-math,
 # REAL_CC or the extra variables forces a clean rebuild of that build directory.
-stamp="fast=$fast REAL_CC=${REAL_CC:-} extra=${extra[*]:-}"
-if [ -f "$build/.flags" ] && [ "$(cat "$build/.flags")" != "$stamp" ]; then
+stamp="fast=$fast REAL_CC=${REAL_CC:-} extra=${extra[*]:-} wrapper=$(cksum < "$root/scripts/cc-no-fast-math.sh" | cut -d" " -f1)"
+if [ -d "$build/objs" ] && [ "$(cat "$build/.flags" 2>/dev/null)" != "$stamp" ]; then
     echo "build flags changed since the last build in $build: rebuilding from scratch"
     clean=1
 fi

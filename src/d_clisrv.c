@@ -1274,6 +1274,7 @@ no_text_cmd:
 
 // ----- Server/Client Responses
 static void CL_ConnectToServer(void);
+static void CL_Rebase_Pending_Pause( void );
 static int16_t  Consistency(void);
 static void Net_Packet_Handler(void);
 static void SV_Reset_NetNode(byte nnode);
@@ -1617,7 +1618,7 @@ static void control_msg_handler( void )
         {
             // Initialize tics on new client.	   
             gametic = read_N32( & netbuffer->u.control.gametic );
-            CL_Clear_Pending_Pause();
+            CL_Rebase_Pending_Pause();
             cl_need_tic = maketic = gametic;  // sync
         }
 
@@ -1654,7 +1655,7 @@ static void control_msg_handler( void )
 
             byte mode = netbuffer->u.control.data1;
             gametic = read_N32( & netbuffer->u.control.gametic );
-            CL_Clear_Pending_Pause();
+            CL_Rebase_Pending_Pause();
             cl_need_tic = maketic = gametic;  // sync
 
             if( mode )
@@ -1790,9 +1791,13 @@ static struct { tic_t tic; byte value; }  pending_pause[PENDING_PAUSE_MAX];
 static byte  pending_pause_cnt = 0;  // sorted by tic, oldest first
 
 // Forget pending changes, for a new game or a closed connection.
+static void CL_Apply_Pending_Pause( void );
+static tic_t  pause_high_tic = 0;  // highest server gametic of a PT_STATE accepted
+
 void CL_Clear_Pending_Pause( void )
 {
     pending_pause_cnt = 0;
+    pause_high_tic = 0;
 }
 
 // Queue a pause value for gametic tic. An entry for the same tic is replaced.
@@ -1821,6 +1826,15 @@ static void CL_Queue_Pause( tic_t tic, byte value )
     pending_pause[i].tic = tic;
     pending_pause[i].value = value;
     pending_pause_cnt++;
+}
+
+// The gametic was set from the server (a join, a repair): apply every queued
+// change at or before it (the last wins) and keep the later ones. Clearing them
+// would lose a pause the client still has to run, as in a repair, which the
+// server sends right after a pause for the same gametic.
+static void CL_Rebase_Pending_Pause( void )
+{
+    CL_Apply_Pending_Pause();
 }
 
 // Called before each G_Ticker.
@@ -1859,6 +1873,15 @@ static void state_handler( void )
     }
     if( testdump_active )
         GenPrintf( EMSG_warn, "TEST: PT_STATE pause %d for server gametic %u, client gametic %u\n", netbuffer->u.state.server_pause, (unsigned) serv_gametic, (unsigned) gametic );
+    if( serv_gametic < pause_high_tic )
+    {
+        // An older change arriving late (d_net hands on out-of-order reliable
+        // packets as they come): a newer one was already accepted.
+        if( testdump_active )
+            GenPrintf( EMSG_warn, "TEST: PT_STATE for server gametic %u ignored (newer %u accepted)\n", (unsigned) serv_gametic, (unsigned) pause_high_tic );
+        return;
+    }
+    pause_high_tic = serv_gametic;
     if( serv_gametic > gametic )
     {
         // Takes effect when the client gets to the server's gametic.
@@ -2640,7 +2663,7 @@ static void repair_handler_client( byte nnode )
         {
             GenPrintf( EMSG_warn, "Client repair: gametic client %u  server %u\n", gametic, net_gametic );
             gametic = net_gametic;
-            CL_Clear_Pending_Pause();
+            CL_Rebase_Pending_Pause();
         }
         random_state_checkset( & netbuffer->u.repair.rs, "Client repair", RSC_client_set ); // to sync P_Random
     }
@@ -4735,7 +4758,7 @@ static void server_cfg_handler( byte nnode )
     {
         // Clients not on the server, update to server time.
         maketic = gametic = cl_need_tic = read_N32( &  netbuffer->u.servercfg.gametic );
-        CL_Clear_Pending_Pause();  // new gametic base
+        CL_Rebase_Pending_Pause();  // new gametic base
     }
 
     // Client keeps server state, even on the server.
