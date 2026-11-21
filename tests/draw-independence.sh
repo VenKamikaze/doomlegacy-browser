@@ -26,6 +26,7 @@ while [ $# -gt 0 ]; do
         *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
 done
+[ -e "$bin" ] && bin="$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")"
 [ -x "$bin" ] || { echo "no game binary at $bin (scripts/build-native.sh)" >&2; exit 2; }
 work="$(mktemp -d "${TMPDIR:-/tmp}/draw-indep.XXXXXX")"
 trap 'rm -rf "$work"' EXIT

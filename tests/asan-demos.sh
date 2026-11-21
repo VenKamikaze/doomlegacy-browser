@@ -52,6 +52,7 @@ if [ "$rebuild" = 1 ] || [ ! -x "$bin" ]; then
         "$root/scripts/build-native.sh" --build build/asan --clean > "${TMPDIR:-/tmp}/asan-build.log" 2>&1 \
         || { echo "ASan build failed, see ${TMPDIR:-/tmp}/asan-build.log" >&2; exit 2; }
 fi
+[ -e "$bin" ] && bin="$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")"
 [ -x "$bin" ] || { echo "no ASan binary at $bin" >&2; exit 2; }
 for f in freedoom1 freedoom2 doom1; do
     [ -f "$root/testdata/$f.wad" ] || { echo "no testdata/$f.wad (scripts/fetch-test-data.sh)" >&2; exit 2; }
@@ -85,6 +86,20 @@ for d in "${demos[@]}"; do
     if [ "$running" -ge "$jobs" ]; then wait -n; running=$((running-1)); fi
 done
 wait
+
+# The hot-join test, with this build: only its sanitizer reports count here. Under ASan
+# both machines run several times slower, and the two files part about 50 tics after
+# the join (bugs.md L29), so the comparison itself is the job of tests/net/test-hot-join.sh
+# with the normal build. This run's result is printed for information.
+hj=0
+if [ "$only" = "." ]; then
+    echo "hot-join test with the ASan build (reports only) ..."
+    "$root/tests/net/test-hot-join.sh" --bin "$bin" --keep "$work/hot-join" > "$work/hot-join.out" 2>&1 || true
+    grep -E "compare:|hot-join:" "$work/hot-join.out" | sed 's/^/  /'
+    hjnew="$(python3 -I "$root/tests/tools/sanitizer-sites.py" --unknown "$root/tests/asan-known.txt" \
+        "$work/hot-join/s/out.txt" "$work/hot-join/c/out.txt")"
+    if [ -n "$hjnew" ]; then hj=1; echo "  NEW sites in the hot-join logs:"; printf '%s\n' "$hjnew" | sed 's/^/    /'; fi
+fi
 
 # Group: print "site-key<TAB>demo" for every report.
 sites="$work/sites.txt"; : > "$sites"
@@ -130,4 +145,4 @@ sys.exit(1 if new else 0)
 PY
 rc=$?
 echo "asan-demos: $(( $(date +%s) - start )) s"
-[ "$bad" = 0 ] && [ "$rc" = 0 ]
+[ "$bad" = 0 ] && [ "$rc" = 0 ] && [ "$hj" = 0 ]

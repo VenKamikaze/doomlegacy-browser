@@ -38,6 +38,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+[ -e "$native" ] && native="$(cd "$(dirname "$native")" && pwd)/$(basename "$native")"
 [ -x "$native" ] || { echo "no native binary at $native (scripts/build-native.sh)" >&2; exit 2; }
 [ -f "$wasmdir/doomlegacy.wasm" ] || { echo "no wasm build in $wasmdir (scripts/build-wasm.sh)" >&2; exit 2; }
 [ "$fast" = 0 ] || [ -x "$fastbin" ] || { echo "no fast-math binary at $fastbin (scripts/build-native.sh --fast-math)" >&2; exit 2; }

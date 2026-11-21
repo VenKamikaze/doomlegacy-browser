@@ -69,6 +69,8 @@ trap cleanup EXIT
 port_s=$((20000 + RANDOM % 20000)); port_c=$((port_s + 1))
 mkdir -p "$work/s" "$work/c"
 export SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+# With a sanitizer build (tests/asan-demos.sh builds one) reports must not stop the game.
+export ASAN_OPTIONS="${ASAN_OPTIONS:-halt_on_error=0:detect_leaks=0}"
 common=(-iwad "$iwad" -nosound -nomusic -noendtext -skill 3)
 
 tics() { # number of records in a dump
@@ -149,6 +151,13 @@ if grep -qiE "$faults" "$work/s/out.txt" "$work/c/out.txt" 2>/dev/null; then
     grep -iE "$faults" "$work/s/out.txt" "$work/c/out.txt" | head -5
 else
     check "no consistency fault or repair in the logs" 0
+fi
+# Sanitizer reports (none in a normal build): a site not in tests/asan-known.txt fails.
+newsites="$(python3 -I "$root/tests/tools/sanitizer-sites.py" --unknown "$root/tests/asan-known.txt" \
+    "$work/s/out.txt" "$work/c/out.txt")"
+if [ -n "$newsites" ]; then
+    check "no sanitizer report from a site that is not in tests/asan-known.txt" 1
+    printf '%s\n' "$newsites" | head -10 | sed 's/^/    /'
 fi
 if [ "$fail" = 0 ]; then echo "hot-join: PASS"; else echo "hot-join: FAIL"; [ -n "$keep" ] || echo "(use --keep DIR to keep the logs)"; fi
 exit "$fail"

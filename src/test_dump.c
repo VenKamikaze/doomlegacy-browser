@@ -555,7 +555,11 @@ void TestDump_Tic( void )
     F( leveltime, leveltime );
     F( gamemap, gamemap );  F( gameepisode, gameepisode );
     F( gamestate, gamestate );
-    F( paused, paused );
+    // Not hashed: `paused`. It is an input to the next tic (set by a pause key or
+    // by the server's network wait before that tic runs), so a record taken just
+    // before a pause is set differs between machines that did or did not set it
+    // yet (a joining client loads the savegame with the pause already on); what
+    // it does shows in leveltime and the world.
     total = hv;
     if( txt )
     {
