@@ -65,3 +65,4 @@ ubsan r_sky.c:199:44 index N out of bounds for type 'byte [N]' L28
 ubsan r_sky.c:201:33 index N out of bounds for type 'byte [N]' L28
 ubsan r_things.c:625:68 left shift of negative value N L10
 ubsan r_things.c:626:66 left shift of negative value N L10
+ubsan p_user.c:393:37 left shift of negative value N L10

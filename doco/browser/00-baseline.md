@@ -132,4 +132,89 @@ The set-up and F1 (done).
 
 ## Outcome
 
-(to be filled in)
+Status: **implemented, awaiting review** (21 Nov 2026; branch `browser/00-baseline`).
+
+**What landed** (commits on the branch; the three marked *fix* are in upstream's style, have a message written for upstream and touch no test code, so each can be cherry-picked)
+
+- `dbcda88`: builds without `-ffast-math`; the wasm build; `src/test_dump.c` (`-testdump`, `-teststate`); the headless runner and the file comparers.
+- `599febc` *fix* (L15): `P_LoadThings` clears `mapthings`.
+- `20a1751`: `tests/demo-hash.sh`, `tests/draw-independence.sh`, `tests/net/test-hot-join.sh`, `tests/asan-demos.sh`, `code-facts.md`, `bugs.md` L13-L20.
+- `7d0d491` *fix* (L21): a client applies the server's network pause at the server's gametic.
+- `f4a09b7` *fix* (L22): the savegame keeps a mobj's `dropoffz` when it differs from `floorz`.
+- `a5e9db4`, `d30b2b9`: the hot-join test finished, the hash settled, ASan sites and `bugs.md` L21-L29.
+- Later commits on the branch are docs and the final numbers.
+
+Files: new `scripts/cc-no-fast-math.sh`, `scripts/build-wasm.sh`, `scripts/wasm.mk`, `src/test_dump.c`, `src/test_dump.h`, `src/sdl/i_nohwr.c`, `tests/demo-hash.sh`, `tests/draw-independence.sh`, `tests/asan-demos.sh`, `tests/asan-known.txt`, `tests/net/test-hot-join.sh`, `tests/tools/{run-wasm.js,testdump-diff.py,state-diff.py,sanitizer-sites.py}`, `doco/browser/code-facts.md`. Changed: `scripts/build-native.sh`, `src/Makefile` (one object), `CMakeLists.txt` (one source), `src/doomtype.h`, `src/i_tcp.c`, `src/m_menu.c` (`__EMSCRIPTEN__`), `src/w_wad.c`, `src/v_video.c` (L13), `src/p_setup.c` (L15), `src/p_saveg.c` (L22), `src/d_clisrv.c` (L21 and two test hooks), `src/d_main.c` and `src/g_game.c` (one test hook each).
+
+**The state hash, in short.** `-testdump FILE` writes 28 bytes per game tic: the tic and 32-bit FNV-1a hashes of the random state, the players, every mobj in thinker order (pointers as indices), the sectors, lines and sides, and the sector effects, plus one for all of them with `leveltime` and the game state. `-teststate FROM [TO]` writes the same as text. It is taken in `TryRunTics` right after `G_Ticker`, so every machine takes it at the same point. A timed demo under `-testdump` quits with status 0 at its end. Without the option nothing changes. What is in it, and what is left out and why, is `code-facts.md` section 11.
+
+**Acceptance criteria**
+
+1. **No `-ffast-math` by default.** The upstream Makefile adds it at `src/Makefile:1357` and nothing can come after it except the end of the command line, so `scripts/cc-no-fast-math.sh` (`CC_EXPLICIT_CMD`) appends `-fno-fast-math` to every compile and link. `CC_WRAP_ECHO=1 scripts/build-native.sh` prints `gcc -Wall -O3 -fomit-frame-pointer -ffast-math -fno-strict-aliasing ... -c m_random.c -o ... -fno-fast-math`; the objects differ from the `--fast-math` build (`cmp` on `p_enemy.o`) and `gcc -Q --help=optimizers -ffast-math -fno-fast-math` shows every fast-math option off again. `scripts/build-native.sh --fast-math` builds as upstream does, into `build/native-fastmath`. `CMakeLists.txt:86` is untouched (the project does not use CMake).
+2. **Wasm from an empty `EM_CACHE`.** `EM_CACHE=/tmp/t/emcache scripts/setup-emsdk.sh --with-ports` seeds SDL2, SDL2_mixer, Ogg and Vorbis from the `emscripten-ports` branch; then `EM_CACHE=... scripts/build-wasm.sh` builds with no download in **30 s** (the log has no "download", "fetch" or "403"; it builds libogg, libvorbis, SDL2, SDL2_mixer and the Emscripten libraries into the cache first). `build/wasm/bin/doomlegacy.wasm` is 2,007,709 bytes, `doomlegacy.js` 180,178. The build is `scripts/wasm.mk` and not the upstream Makefile (why: `building.md` section 7).
+3. **`tests/demo-hash.sh`: 11 of 11 identical, every run exits 0 by itself** (440 s with the fast-math runs, 3 demos at a time on 4 cores). Per demo, native against wasm, records compared:
+
+   | Demo | Records | Native | Wasm |
+   |---|---|---|---|
+   | `d1demo1` | 5,026 | 28 s | 75 s |
+   | `d1demo2` | 3,836 | 23 s | 59 s |
+   | `d1demo3` | 2,134 | 12 s | 31 s |
+   | `fd1demo1` | 7,117 | 34 s | 90 s |
+   | `fd1demo2` | 7,089 | 37 s | 108 s |
+   | `fd1demo3` | 6,042 | 27 s | 96 s |
+   | `fd1demo4` | 3,136 | 15 s | 43 s |
+   | `fd2demo1` | 2,664 | 13 s | 42 s |
+   | `fd2demo2` | 5,444 | 28 s | 67 s |
+   | `fd2demo3` | 2,743 | 16 s | 47 s |
+   | `fd2demo4` | 4,662 | 26 s | 38 s |
+
+   (Times include the start-up; the wasm runs shared the machine with two native runs each.) This took three fixes in the sources the hash exposed: the first run found that the shareware `DEMO1` parts at tic 4,898, the start of E1M5, where native spawned three extra voodoo dolls (L15, fixed); earlier, the hash itself had to learn to leave out fields the game never sets (L16).
+4. **Draw and pacing independence: `tests/draw-independence.sh` PASS** (92 s): `d1demo3`, `fd2demo3` and `fd1demo4` (one per IWAD) give identical files with `-timedemo`, `-timedemo -nodraw` and `-playdemo` in real time. Its first version found the one thing the renderer writes that the hash had included: `ML_MAPPED` on lines (`r_segs.c:2750`), which differed at tic 2; it is out of the hash. `code-facts.md` section 11 says what else was checked (`M_Random`, `A_Random`, `N_Random` are drawing-side only).
+5. **`tests/net/test-hot-join.sh` PASS in 56 s** and exits by itself: the server starts E1M1 of Freedoom 1, a client joins after 10 s over UDP on loopback, receives the savegame and plays 40 s; **1,441 records identical, tics 356 to 1,796** (the client's first record is the state as loaded, at the server's gametic), no consistency fault or repair in the logs, and the game was not idle (219 distinct `P_Random` states, 16 world states). `--together` (`-server 2`): 1,089 identical records from tic 1, 35 s. It also passes with the four cores busy (apart from one artefact that is now out of the hash). It needed two fixes in the game (L21, L22). With a bot (`--bots`) it fails, on purpose (L23), and bots crash the server on a long name (L24).
+6. **Each test fails when what it checks is broken** (throwaway patches, none committed):
+   - `demo-hash.sh`: a wasm-only change (`#ifdef __EMSCRIPTEN__`, one `P_Random` index bump at `leveltime` 300 in `P_Ticker`) on `fd2demo1`: `FAIL native != wasm: first difference at tic 300: total, random` and the state line `random prnd=84: prnd: 84 -> 85`.
+   - `draw-independence.sh`: a `P_Random()` call in `R_RenderPlayerView` on `d1demo3`: `FAIL timed != nodraw: first difference at tic 2: total, random` (and `timed == real` passes because real time draws every tic too); the same call only when `!singletics`: `FAIL timed != real: first difference at tic 2: total, random` and `timed == nodraw` passes.
+   - `test-hot-join.sh`: a client that runs `P_Ticker()` once after loading the savegame (one tic late): `FAIL every tic both files have is identical: first difference at tic 361: total`. Without the L21 fix the test fails the same way at the first tic (that is how L21 was found: the client's `leveltime` one ahead).
+   - `asan-demos.sh`: a new out-of-bounds read of a four-element static array in `P_Ticker`: `NEW 1x global-buffer-overflow p_tick.c:433 in P_Ticker`, `ubsan p_tick.c:433:58 index N out of bounds`, and exit status 1.
+7. **Without `-testdump` the game behaves as before.** `scripts/run-headless.sh` plays all 11 demos to their end with status 0 and no error in the output (4 at a time): `d1demo1` 152 s, `d1demo2` 115 s, `d1demo3` 64 s, `fd1demo1` 207 s, `fd1demo2` 205 s, `fd1demo3` 175 s, `fd1demo4` 93 s, `fd2demo1` 78 s, `fd2demo2` 158 s, `fd2demo3` 81 s, `fd2demo4` 136 s: the same as before (F1's table). `tests/sprite-column-oob.sh`: **6 passed, 0 failed** (60 s).
+8. **ASan findings are in `bugs.md`**, grouped by site (below).
+9. **`code-facts.md`** covers every claim of the survey (verdict and file:line) and the list of section 7 of the brief: the driver table and `doomcom`, start-up, the join step by step, `Consistency()`, every blocking loop, the floats, savegame portability, file locations, the music path.
+10. **No game data in any commit** (`git log --stat` shows only scripts, sources and docs; `testdata/` and `build/` are ignored).
+
+**`-ffast-math` against none.** `tests/demo-hash.sh --fast-math` plays the 11 demos on a native build with upstream's `-ffast-math` as well: **all 11 files are identical to the build without it.** So nothing in the demos is sensitive to it (they reach only `FixedDiv2`'s `double` division of the float code, `code-facts.md` section 7). The flag stays out all the same: the friction, pusher and bot-aiming code that the demos do not reach is where it could matter.
+
+**Reaching the float code.** The 11 demos are vanilla demos in compatibility mode and reach none of MBF friction, pushers or bot aiming. A bounded run that does needs a Legacy-format demo recorded natively (`-record`, version 144 or later, which writes bot ticcmds, `g_game.c:1776`) on a map with friction or pusher sectors and `+addbot` (which crashes on long names, L24: use one bot), or a `-server`/`-connect` pair with a wasm instance on the client side (brief 04). Not done here.
+
+**ASan with recovery** (`tests/asan-demos.sh`: gcc 13.3, `-O3`, `-fsanitize=address,undefined -fsanitize-recover=all -fno-sanitize=alignment`, all 11 demos plus the hot-join test; **every demo exits 0; the script exits 0; 230 to 290 s**). UBSan's alignment check is left out: L9 would flood the logs. 64 sites in all (53 in the 11 demos, 11 more only in the hot-join logs: the savegame code and `p_user.c`), each in `tests/asan-known.txt` with its L number (a site that is not in the file fails the run):
+- ASan, 2 sites: `R_RenderSegLoop` reading `finetangent` past its end (`r_segs.c:2448`, L8, all 11 demos) and `CV_monster_OnChange` reading one byte before `monbehav_to_infight` (`p_enemy.c:504`, new, **L26**, every demo at its end).
+- UBSan, 62 sites: 47 left shifts of negative or too-large values (L10), 4 signed overflows that are meant to wrap (**L27**), 6 reads past the end of the generated sky's rows (`r_sky.c:189-201`, **L28**, shareware only), 2 more of the `monbehav_to_infight` read (L26) and 3 more of the `finetangent` read in `r_segs.c:2448` (L8).
+- ASan cannot see the sprite pad-byte read of L1: the lumps live in the zone heap.
+- Nothing in the list can crash, freeze or desync a game, so none is queued.
+
+**Findings that need a decision or a chunk** (all in `bugs.md`)
+- **L19, queued: the savegame is not portable between a 64-bit native build and wasm32.** The sector-effect structs are written as raw memory, tail padding included: `ceiling_t` is 40 bytes on x86_64 and 36 on wasm32, `vldoor_t` 32 and 28, `floormove_t` 32 and 28, `elevator_t` 24 and 20, `lightfader_t` 8 and 4 (`code-facts.md` section 8). A browser that joins a native host in progress reads the savegame shifted at the first door or lift. This breaks the case the project is for; it needs a fix chunk before brief 04.
+- **L23, user to decide: bots and joining in progress do not mix.** The savegame holds part of a bot's state; the first tic after a join already differs and the client is kicked.
+- **L24, queued: `Command_AddBot` overflows a 10-byte buffer** (names are up to 21): a stack-smashing abort on adding a bot with a long name. One-line fix.
+- **L29, noted for 04: a much slower client diverges a second after it joins** (ASan builds on both machines; normal builds pass, also under load).
+- **L20, noted for 04: bot aiming uses `atan`** (glibc against musl); untested between native and wasm.
+
+**Fixes made in this brief, and why** (each was needed to make the hash or the hot-join test work, per `PROMPT.md` section 5)
+- L13: a build without `HWRENDER` did not compile (`w_wad.c`, `v_video.c`): three small edits, needed for the wasm build (D5).
+- L15: `memset` of `mapthings` after allocation (`p_setup.c`): needed for the native-against-wasm hash on the shareware `DEMO1`.
+- L21: the client applies a `PT_STATE` pause change at the server's gametic (`d_clisrv.c`, 30 lines): needed for the hot-join test; without it every join starts a tic off.
+- L22: `dropoffz` saved when it differs from `floorz` (`p_saveg.c`, one line): needed for the same.
+Whether upstream already has any of these could not be checked (below).
+
+**For later briefs**
+- 01 (vnet): `hardware_MAXPACKETLENGTH` is 512 on the internet path already; `i_vnet.c` replaces `I_Init_TCP_Network` and the seven pointers (`code-facts.md` section 2). `-server`/`-connect` and the node numbers are in section 3.
+- 02: the loops to yield in are in `code-facts.md` section 6, with the launcher's "press ESC" loop and the 3 s `I_Sleep` in `I_Error`. The headless runner is `tests/tools/run-wasm.js` (Chromium; Node cannot start SDL video).
+- 03: the `$$$.sav` file of the join goes to the working directory; `legacy.wad` must be found at start (section 9).
+- 04: L19 (before anything), L23, L29, L20; the hash comparison between a native host and a wasm client is `tests/net/test-hot-join.sh` with one side replaced (`tests/tools/run-wasm.js` can write the dump; the page needs a vnet transport first).
+- M1: the music path is `code-facts.md` section 10: `I_RegisterSong` gets the raw lump.
+- The hash can be extended (the boss brain, the item respawn queue and FraggleScript are not in it) when a map that uses them is added.
+
+**Not done**
+- **Upstream check.** The SourceForge SVN repository still cannot be read from here, so whether a newer revision already fixes L13, L15, L21, L22, L24 or the others is unchecked. To check on a machine with Subversion: `svn cat svn://svn.code.sf.net/p/doomlegacy/code/legacy_one/trunk/src/p_setup.c | sed -n '/P_LoadThings/,/Z_Malloc/p'` and the same for the other files (the repository path is a guess, see the F1 Outcome).
+- No `fix/` branch for L15, L21 or L22: pushing a branch from `main` is outside this brief's rules, so each is a single commit on this branch whose message is written for upstream; `git format-patch -1 599febc` (and `7d0d491`, `f4a09b7`) with `--relative=doomlegacy_1.48.18/svn1749` gives trunk-relative patches.
+- The CMake build was not changed.
+- The hot-join test runs between two native instances only: a wasm instance cannot reach UDP (brief 01).
