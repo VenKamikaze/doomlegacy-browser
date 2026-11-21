@@ -4068,7 +4068,8 @@ void M_Dir_delete (int ch)
 
 
 // [smite] MinGW compatibility
-#ifndef WIN32
+#if !defined(WIN32) && !defined(__EMSCRIPTEN__)
+// Emscripten's libc has no ftw, so it uses the dirent code below.
 #define USE_FTW 
 #endif
 

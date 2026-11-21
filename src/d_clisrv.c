@@ -168,6 +168,7 @@
   // StartSound
 #include "d_items.h"
   // NUMINVENTORYSLOTS, NUMAMMO
+#include "test_dump.h"
 
 
 //
@@ -5849,6 +5850,7 @@ void TryRunTics (tic_t realtics)
             G_Ticker ();
             ExtraDataTicker();  // execute NetXCmd
             gametic++;
+            TestDump_Tic();  // test-only (-testdump), nothing without it
             // skip paused tic in a demo
             if(demoplayback)
             {

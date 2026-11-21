@@ -3423,7 +3423,9 @@ void V_Setup_VideoDraw(void)
 #endif
 
     // Software draw only.
+#ifdef HWRENDER
     EN_HWR_flashpalette = 0;  // software and default
+#endif
 
     if( vid.display == NULL )
     {
