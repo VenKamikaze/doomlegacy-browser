@@ -17,7 +17,10 @@ The goal is Doom Legacy playable in a browser (Emscripten/WASM), **with its musi
 | — | Repository tidy-up and environment set-up | done, 19 Nov 2026 |
 | F1 | [Sprites crash the 24/32 bpp column drawer on 64-bit builds](F1-sprite-column-oob.md) (`bugs.md` L1) | done |
 | M1 | OPL music (D8, Q5 c): Doom's DMX OPL sound from the IWAD's `GENMIDI`, natively and in the browser | not written |
-| 00 | [Baseline, state hash and code facts](00-baseline.md): native and wasm builds without `-ffast-math`, a per-tic state hash (`-testdump`) compared native against wasm, a hot-join test over UDP, ASan with recovery, [`code-facts.md`](code-facts.md) | implemented; awaiting review (see its Outcome) |
+| 00 | [Baseline, state hash and code facts](00-baseline.md): native and wasm builds without `-ffast-math`, a per-tic state hash (`-testdump`) compared native against wasm, a hot-join test over UDP, ASan with recovery, [`code-facts.md`](code-facts.md) | done |
+| 01 | vnet transport (native) | not written |
+| F2 | Portable savegame between x86_64 and wasm32 (`bugs.md` L19, L30) | queued, after 01 |
+| F3 | Bots and joining a game in progress (`bugs.md` L23, L24) | queued, after F2 |
 
 ## Settled decisions
 

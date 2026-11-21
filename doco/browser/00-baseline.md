@@ -132,7 +132,7 @@ The set-up and F1 (done).
 
 ## Outcome
 
-Status: **implemented, awaiting review** (21 Nov 2026; branch `browser/00-baseline`).
+Status: **done** (merged into `claudeai` with `--no-ff`, 21 Nov 2026; branch `browser/00-baseline`). Three reviews, two fix rounds; the coordinator's verification is at the end.
 
 **What landed** (commits on the branch; the three marked *fix* are in upstream's style, have a message written for upstream and touch no test code, so each can be cherry-picked)
 
@@ -241,3 +241,27 @@ Re-run after the fixes: `tests/demo-hash.sh` 11 of 11 identical in 326 s (and 11
 3. Nits: `build-native.sh` cleans a build directory that has objects but no stamp, and the stamp includes the wrapper's checksum; `demo-hash.sh` checks for an empty demo after the `--only` filter; `test-hot-join.sh --no-force` runs the natural, unforced join (no `-testunpausedelay`, no applied-pause check; run it in addition to the default); the "server kept running" wording matches the check; `build-wasm.sh --help` prints its usage.
 
 Re-run after round 2: `test-hot-join.sh` default PASS (1,449 identical records), `--together` PASS (1,111), `--no-force` PASS; with the L21 fix off (throwaway build) it fails (applied-pause check and file comparison, first difference at tic 370); `tests/demo-hash.sh` 11 of 11 identical, 373 s; `tests/draw-independence.sh` PASS.
+
+### Review and coordinator verification (21 Nov 2026)
+
+- **Reviews.** An independent read-only reviewer reviewed `70120b7` (merge after fixes: no blocking findings; the L21 test was racy, stopped plats/ceilings and `soundtarget` were not hashed, a single-slot pause, no clearing between sessions, and nits), then `b0e8355` (merge after one fix: clearing the queue on a gametic rebase lost a pause; out-of-order `PT_STATE`), then `abe2dd7` (**merge**; two nits). Every finding was checked against the code before it went back; all were acted on, as the two Fix round sections say.
+- **The reviewer's last two nits, fixed by the coordinator:** `code-facts.md` §11 now says a repair *usually* sends a fresh `PT_STATE` (`SV_network_wait_timer` sends none while the server is already paused or waiting, `d_clisrv.c:1852-1860`); `scripts/build-wasm.sh --help` works without emsdk (checked with `EMSDK_DIR=/nonexistent`).
+- **Coordinator run on `abe2dd7`**, clean builds, 4 cores, run one after another:
+
+  | Check | Result | Time |
+  |---|---|---|
+  | `scripts/build-native.sh --clean` | built | 10 s |
+  | `scripts/build-wasm.sh clean` then build | built | 8 s |
+  | `tests/demo-hash.sh` | 11 passed, 0 failed (native == wasm, every run exit 0) | 330 s |
+  | `tests/draw-independence.sh` | PASS | 92 s |
+  | `tests/net/test-hot-join.sh` (default, forced race) | PASS | 57 s |
+  | `tests/net/test-hot-join.sh --together` | PASS | 46 s |
+  | `tests/net/test-hot-join.sh --no-force` | PASS | 56 s |
+  | `tests/sprite-column-oob.sh` | 6 passed, 0 failed | 61 s |
+  | `scripts/run-headless.sh` on `d1demo1`, `fd1demo1`, `fd2demo2` | exit 0 each, at the end of the demo | 151, 206, 158 s |
+  | `tests/asan-demos.sh` (all 11 demos) | 53 sites, all known, 0 new; exit 0 | 218 s |
+
+  The ASan script's hot-join part (reports only, not a pass/fail) diverged at tic 438: that is L29 (both machines 3-5 times slower), left for brief 04.
+- **Queued after this brief** (the user, 21 Nov 2026): F2 portable savegame (L19, L30) after brief 01; F3 bots and hot join (L23, L24) after F2. See `PROMPT.md` §3.
+- **Not checked from here:** whether upstream SVN has L13, L15, L21 or L22 fixed, and whether its maintainer accepts patches (SourceForge can't be read from the cloud container).
+

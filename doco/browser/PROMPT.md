@@ -9,25 +9,28 @@ You work **one chunk at a time**. For each chunk you write a brief, have it impl
 
 ## 0. Where things stand (hand-off: update this after every merge)
 
-**21 Nov 2026.** The set-up and F1 are done and merged into `claudeai` (`76bb706`). Nothing else has started.
+**21 Nov 2026.** The set-up, F1 and **brief 00** are done and merged into `claudeai` (00 by the `--no-ff` merge of `browser/00-baseline`). Next is **01**, then F2 and F3 (§3).
 
 - The repository is tidied into upstream's SVN trunk layout (r1749). `main` keeps the pristine extract of the release archives (`b1daf91`).
-- vnet is at `ext/vnet` (`v0.5.0`, `8572c74`).
-- Scripts in `scripts/`:
-  - `setup.sh` (apt and pacman);
-  - `setup-emsdk.sh` (Emscripten 6.0.13; `--with-ports` seeds SDL2, SDL2_mixer, Ogg and Vorbis from this repo's `emscripten-ports` branch);
-  - `build-native.sh`;
-  - `fetch-test-data.sh` (Freedoom 0.13.0 and the shareware `DOOM1.WAD`, verified, plus their 11 demos);
-  - `run-headless.sh`;
-  - `wadlump.py`.
-- **F1 (done):** 64-bit builds crashed the first time a sprite was drawn (`bugs.md` L1). Two-line fix; regression test `tests/sprite-column-oob.sh`. All 11 demos now play to the end with status 0 on x86_64.
+- vnet is at `ext/vnet` (`v0.5.0`, `8572c74`). Its datagrams are unordered (`ext/vnet/README.md:17`).
+- **Builds:**
+  - `scripts/build-native.sh` builds without `-ffast-math` and with `-ffp-contract=off` (through `scripts/cc-no-fast-math.sh`), `--fast-math` for upstream's flags; a flags stamp forces a clean rebuild when they change.
+  - `scripts/build-wasm.sh` (`scripts/wasm.mk`, its own makefile: upstream forces `HWRENDER` for SDL): software renderer, about 8 s from clean. No page yet; the game loop blocks the page until it exits (ASYNCIFY yields are brief 02's).
+- **Tests** (`building.md` has the commands and times):
+  - `tests/demo-hash.sh`: the per-tic state hash (`-testdump`, `src/test_dump.c`) of all 11 demos is identical native and wasm (about 5.5 min);
+  - `tests/draw-independence.sh`: drawing doesn't touch the simulation;
+  - `tests/net/test-hot-join.sh`: two native instances over UDP on loopback, a client joining a game in progress (forced race by default; `--together`, `--no-force`; `--bots` fails until F3);
+  - `tests/asan-demos.sh`: ASan and UBSan with recovery, every known site in `tests/asan-known.txt` (53 sites);
+  - `tests/sprite-column-oob.sh` (6/6), `scripts/run-headless.sh` (a demo to its end, exit 0).
+- **Facts:** [`code-facts.md`](code-facts.md) checks every survey claim with file:line refs and covers the network, the join, the pause handling, the blocking loops, the floats, the savegame and the music path. Read it before writing a brief.
+- **Bugs:** `bugs.md` L1-L31. Fixed inside 00 (smallest fixes, upstream-style commits on `browser/00-baseline`, no `fix/` branches): L13 (build without `HWRENDER`), L15 (`P_LoadThings`), L21 (a joining client's pause timing; now a queue ordered by tic), L22 (`dropoffz` in the savegame). **Queued:** F2 = L19 + L30, F3 = L23 + L24. **For brief 04:** L29 (a slow joiner diverges), L31 (`PT_STATE` has no sequence number).
 - **Decisions D1-D12 and the answers Q1-Q5** are in [`README.md`](README.md). The main ones:
   - joining a game in progress is in scope;
   - music is in the first release, played through OPL3 emulation with the IWAD's `GENMIDI` bank;
   - test data is Freedoom and `DOOM1.WAD`;
   - the git model is `claudeai`, `browser/NN-*` and `fix/*`.
-- **Not checked yet:** whether upstream SVN has fixed L1 already. SourceForge can't be read from the cloud container; the user can check (F1's Outcome has the command).
-- **Next:** the chunk order in §3. Start with **00**.
+- **Not checked yet:** whether upstream SVN has fixed L1, L13, L15, L21 or L22, and whether its maintainer accepts patches. SourceForge can't be read from the cloud container; the user can check (F1's Outcome has the command).
+- **Next:** brief 01 (vnet transport, native), once the user says go.
 
 ## 1. Read first, in this order
 
