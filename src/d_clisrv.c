@@ -1778,6 +1778,25 @@ void SV_Send_State( byte server_pause )
     SV_SendPacket_All( SP_reliable, sizeof(state_pak_t), NULL );
 }
 
+// A pause or unpause by the server's network wait (SV_network_wait_timer,
+// SV_network_wait_handler) takes effect at the server's gametic, which
+// PT_STATE carries. The client may receive it a tic or more before it gets
+// there, as when it has just loaded the savegame of a join, and then it must
+// keep running the tics before that gametic in the old state, as the server did.
+static byte    pending_pause = 0;
+static tic_t   pending_pause_tic = 0;
+static boolean pending_pause_set = false;
+
+// Called before each G_Ticker.
+static void CL_Apply_Pending_Pause( void )
+{
+    if( pending_pause_set && gametic >= pending_pause_tic )
+    {
+        paused = pending_pause;
+        pending_pause_set = false;
+    }
+}
+
 // By Client
 static void state_handler( void )
 {
@@ -1797,7 +1816,18 @@ static void state_handler( void )
         // Update the random generators.
         random_state_checkset( & netbuffer->u.state.rs, "PT_STATE", RSC_client_set ); // to sync P_Random
     }
-    paused = netbuffer->u.state.server_pause;
+    if( serv_gametic > gametic )
+    {
+        // Takes effect when the client gets to the server's gametic.
+        pending_pause = netbuffer->u.state.server_pause;
+        pending_pause_tic = serv_gametic;
+        pending_pause_set = true;
+    }
+    else
+    {
+        pending_pause_set = false;
+        paused = netbuffer->u.state.server_pause;
+    }
 
 #if 0
     debug_Printf( "STATE: gametic %i, P_Random [%i], paused %i\n",
@@ -5847,6 +5877,7 @@ void TryRunTics (tic_t realtics)
                 D_Clear_ticcmd( gametic );
             }
 
+            CL_Apply_Pending_Pause();
             G_Ticker ();
             ExtraDataTicker();  // execute NetXCmd
             gametic++;
