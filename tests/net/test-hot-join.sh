@@ -7,11 +7,13 @@
 #   tests/net/test-hot-join.sh --together      # baseline: both start together (-server 2)
 #   tests/net/test-hot-join.sh --bin FILE      # another game binary (e.g. the ASan build)
 #   tests/net/test-hot-join.sh --keep DIR      # keep the logs and dumps in DIR
+#   tests/net/test-hot-join.sh --bots          # also add a bot (FAILS today: bots are not restored by the join, bugs.md L21)
+#   tests/net/test-hot-join.sh --state N       # also write the text state (-teststate N) of tic N on both machines
 #   tests/net/test-hot-join.sh --join-after N  # seconds of play before the client starts (default 10)
 #   tests/net/test-hot-join.sh --play N        # seconds of game time to compare after the join (default 40)
 #
-# The server runs Freedoom 1 E1M1 headless (dummy video, no sound) with two bots
-# and the level's monsters, and writes a -testdump file. After --join-after seconds
+# The server runs Freedoom 1 E1M1 headless (dummy video, no sound) with the level's monsters
+# (and a bot with --bots), and writes a -testdump file. After --join-after seconds
 # a client starts with -connect 127.0.0.1, receives the savegame and plays on; it
 # writes a -testdump file too. Real time, 35 tics a second, so a run takes about
 # --join-after + --play + start-up seconds, then the script stops both instances.
@@ -21,7 +23,11 @@
 #   - the client's file starts at the join tic and holds at least --play seconds of tics;
 #   - every tic that both files have is identical (tests/tools/testdump-diff.py --common);
 #   - the server kept running the whole time (its file is longer than the client's end tic);
-#   - neither log reports a consistency fault, a repair or a kick.
+#   - the game was not idle: the client's files shows the P_Random index moving (monsters
+#     rolling dice) and the world changing;
+#   - neither log reports a consistency fault, a repair or a kick. (The client logs
+#     "PT_STATE: ... update client P_random index 0 to server N" while it downloads,
+#     before the savegame sets its index; that one is expected.)
 # Exit status: 0 pass, 1 fail, 2 bad set-up.
 set -uo pipefail
 
@@ -32,11 +38,15 @@ join_after=10
 play=40
 together=0
 keep=""
+bots=()
+state=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --bin) bin="${2:?}"; shift 2 ;;
         --together) together=1; shift ;;
         --keep) keep="${2:?}"; shift 2 ;;
+        --bots) bots=(+addbot); shift ;;
+        --state) state=(-teststate ${2:?}); shift 2 ;;  # "N" or "FROM TO"
         --join-after) join_after="${2:?}"; shift 2 ;;
         --play) play="${2:?}"; shift 2 ;;
         -h|--help) sed -n '2,/^set -uo/p' "${BASH_SOURCE[0]}" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
@@ -73,7 +83,7 @@ check() { # check "name" status
 # game; -server 2 waits for a second player node. Bots give the game something to do.
 if [ "$together" = 1 ]; then nodes=2; else nodes=1; fi
 ( cd "$work/s" && exec "$bin" -home "$work/s" "${common[@]}" -server "$nodes" -udpport "$port_s" \
-    -warp 1 1 -testdump s.bin +addbot +addbot > out.txt 2>&1 ) &
+    -warp 1 1 -testdump s.bin "${state[@]}" "${bots[@]}" > out.txt 2>&1 ) &
 spid=$!; pids+=("$spid")
 echo "server: pid $spid, port $port_s"
 
@@ -91,7 +101,7 @@ fi
 join_server_tic="$(tics "$work/s/s.bin")"
 echo "client joins at server tic about $join_server_tic"
 ( cd "$work/c" && exec "$bin" -home "$work/c" "${common[@]}" -connect 127.0.0.1 -udpport "$port_s" \
-    -clientport "$port_c" -testdump c.bin > out.txt 2>&1 ) &
+    -clientport "$port_c" -testdump c.bin "${state[@]}" > out.txt 2>&1 ) &
 cpid=$!; pids+=("$cpid")
 
 # wait until the client has played $play seconds of tics, up to a limit
@@ -122,8 +132,18 @@ if [ "$cn" -gt 0 ] && [ "$sn" -gt 0 ]; then
     res="$(python3 -I "$root/tests/tools/testdump-diff.py" --common "$work/s/s.bin" "$work/c/c.bin")"; rc=$?
     echo "  compare: $res"
     check "every tic both files have is identical" $rc
+    act="$(python3 -I - "$work/c/c.bin" <<'PY'
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+r = [struct.unpack_from('<7I', d, i) for i in range(0, len(d), 28)]
+print(len(set(x[2] for x in r)), len(set(x[5] for x in r)))
+PY
+)"
+    set -- $act
+    echo "  activity: $1 distinct P_Random states, $2 distinct world states in the client's file"
+    check "the game was not idle (>= 20 random states, >= 3 world states)" $([ "${1:-0}" -ge 20 ] && [ "${2:-0}" -ge 3 ] && echo 0 || echo 1)
 fi
-faults='consistency (fault|failure)|desync|out of sync|Client repair|random index|Kick (node|player)|savegame failed|Can.t load the level'
+faults='consistency (fault|failure)|desync|out of sync|Client repair|Report: gametic|Kick (node|player)|savegame failed|Can.t load the level'
 if grep -qiE "$faults" "$work/s/out.txt" "$work/c/out.txt" 2>/dev/null; then
     check "no consistency fault or repair in the logs" 1
     grep -iE "$faults" "$work/s/out.txt" "$work/c/out.txt" | head -5

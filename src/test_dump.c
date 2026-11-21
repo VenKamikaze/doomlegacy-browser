@@ -212,11 +212,13 @@ static uint32_t hash_players( void )
             F( momx, pl->mo->momx );  F( momy, pl->mo->momy );
             F( momz, pl->mo->momz );  F( angle, pl->mo->angle );
         }
-        F( viewz, pl->viewz );
+        // Not hashed: viewz, bob, bob_momx and bob_momy (and the weapon sprite's
+        // sx and sy below). They are the view bobbing: a savegame does not hold
+        // them, so a player that joined by savegame has them differ for a while
+        // (they decay with friction), and nothing in the game reads them. The
+        // weapon's state and tics are hashed, which is what the bob can change.
         F( viewheight, pl->viewheight );
         F( deltaviewheight, pl->deltaviewheight );
-        F( bob, pl->bob );
-        F( bobx, pl->bob_momx );  F( boby, pl->bob_momy );
         F( aiming, pl->aiming );
         F( health, pl->health );
         F( armor, pl->armorpoints );
@@ -246,8 +248,6 @@ static uint32_t hash_players( void )
         {
             F( ps_state, state_num( pl->psprites[j].state ) );
             F( ps_tics, pl->psprites[j].tics );
-            F( ps_sx, pl->psprites[j].sx );
-            F( ps_sy, pl->psprites[j].sy );
         }
         F( chicken, pl->chickenTics );
         F( flyheight, pl->flyheight );

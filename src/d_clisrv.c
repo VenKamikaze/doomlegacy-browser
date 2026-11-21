@@ -3279,6 +3279,7 @@ static void CL_ConnectToServer( void )
                     goto reset_to_searching;
 
                 gamestate = GS_LEVEL;  // game loaded
+                TestDump_Tic();  // test-only: the state as loaded, for gametic
                 cl_mode = CLM_connected;
                 break;
 #else	   
