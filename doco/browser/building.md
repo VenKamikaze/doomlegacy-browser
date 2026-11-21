@@ -142,7 +142,7 @@ All run from the repository root and need `scripts/build-native.sh` and `scripts
 
 | Test | What it does | Time here (4 cores) |
 |---|---|---|
-| `tests/demo-hash.sh` | All 11 demos, `-timedemo -testdump`, native and wasm, 3 at a time; compares the files record for record and prints the first differing tic and the state lines that differ. `--fast-math` also plays them on `build/native-fastmath` (information only). `--only REGEX`, `--jobs N`. | about 7 min (6.5 with `--fast-math`) |
+| `tests/demo-hash.sh` | All 11 demos, `-timedemo -testdump`, native and wasm, 3 at a time; compares the files record for record and prints the first differing tic and the state lines that differ. `--fast-math` also plays them on `build/native-fastmath` (information only). `--only REGEX`, `--jobs N`. | about 5.5 min (326 s measured); 7 min with `--fast-math` (413 s) |
 | `tests/draw-independence.sh` | One demo per IWAD, played with `-timedemo`, `-timedemo -nodraw` and `-playdemo` (real time): the three files must be identical. | 90 s |
 | `tests/net/test-hot-join.sh` | Two native instances on loopback: the server starts E1M1, a client joins after 10 s, gets the savegame and plays 40 s; their `-testdump` files must agree for every tic both have, from the client's first. `--together` starts both at once (`-server 2`); `--bots` adds a bot (fails today, `bugs.md` L23); `--state N` writes the text state of tic N on both. | 56 s (35 s together) |
 | `tests/asan-demos.sh` | Builds `build/asan` (ASan and UBSan, recover on), plays all 11 demos and groups the reports by site; a site not in `tests/asan-known.txt` fails the run. | see `00-baseline.md` |

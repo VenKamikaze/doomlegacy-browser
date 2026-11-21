@@ -16,6 +16,12 @@ void TestDump_Init( void );
 // Call right after G_Ticker and ExtraDataTicker, once gametic is incremented.
 void TestDump_Tic( void );
 
+// Test-only -testunpausedelay N (server): after the clients are ready, the server's
+// network wait pause lasts N more gametics, so that its unpause names a later gametic
+// than a joining client has reached (the race of bugs.md L21). Returns true while
+// it should still wait. Always false without the option.
+int TestDump_UnpauseDelay( unsigned int now );
+
 // True if -testdump is active.
 extern int  testdump_active;
 

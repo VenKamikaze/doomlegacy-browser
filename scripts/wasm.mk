@@ -2,7 +2,7 @@
 #
 # Makefile for the Emscripten (WebAssembly) build of Doom Legacy.
 # Run it through scripts/build-wasm.sh, which sets up emsdk and calls
-#   emmake make -f scripts/wasm.mk -j4
+#   make -f scripts/wasm.mk -j4   (after sourcing emsdk_env.sh)
 #
 # Why not the upstream Makefile (as the native build does): for SDL it always
 # defines HWRENDER and links the OpenGL renderer objects and -lGL -lGLU, asks the
@@ -47,9 +47,9 @@ SDLFLAGS := -sUSE_SDL=2 -sUSE_SDL_MIXER=2
 # (music.c) defines too; a shared library hides its own on native builds. Renaming
 # ours on the command line avoids both a clash and a source change.
 DEFS     := -DLINUX -DSDL2 -DSMIF_SDL -DHAVE_MIXER -Ddetect_music_type=dl_detect_music_type
-CFLAGS   += -Wall $(OPTLEV) -fno-strict-aliasing $(DEFS) $(SDLFLAGS) -Isrc -Isrc/umapinfo -MMD -MP
+CFLAGS   := -Wall $(OPTLEV) -ffp-contract=off -fno-strict-aliasing $(DEFS) $(SDLFLAGS) -Isrc -Isrc/umapinfo -MMD -MP
 # 2 MB of stack (Emscripten's default is 64 KB), memory grows on demand.
-LDFLAGS  += $(OPTLEV) $(SDLFLAGS) -sSTACK_SIZE=2097152 -sINITIAL_MEMORY=134217728 \
+LDFLAGS  := $(OPTLEV) $(SDLFLAGS) -sSTACK_SIZE=2097152 -sINITIAL_MEMORY=134217728 \
   -sALLOW_MEMORY_GROWTH=1 -sEXIT_RUNTIME=1 -sFORCE_FILESYSTEM=1 \
   -sMODULARIZE=1 -sEXPORT_NAME=createDoomLegacy -sINVOKE_RUN=0 \
   -sEXPORTED_RUNTIME_METHODS=FS,ENV,callMain

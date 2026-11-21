@@ -48,9 +48,17 @@ if [ "$fast" = 0 ]; then
 fi
 args+=("${extra[@]}")
 mkdir -p "$build"
+# Objects built with other flags must not be reused: a change of --fast-math,
+# REAL_CC or the extra variables forces a clean rebuild of that build directory.
+stamp="fast=$fast REAL_CC=${REAL_CC:-} extra=${extra[*]:-}"
+if [ -f "$build/.flags" ] && [ "$(cat "$build/.flags")" != "$stamp" ]; then
+    echo "build flags changed since the last build in $build: rebuilding from scratch"
+    clean=1
+fi
 make --no-print-directory "${args[@]}" dirs >/dev/null
 [ "$clean" = 1 ] && make --no-print-directory "${args[@]}" clean
 make --no-print-directory "${args[@]}" depend
 make --no-print-directory "${args[@]}" -j"${JOBS:-$(nproc)}"
 cp common/legacy.wad "$build/bin/legacy.wad"
+printf '%s\n' "$stamp" > "$build/.flags"
 echo "built $root/$build/bin/doomlegacy"

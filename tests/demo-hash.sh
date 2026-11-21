@@ -62,16 +62,19 @@ iwad_of() {
 run_native() {
     local bin="$1" dir="$2" iwad="$3" demo="$4"; shift 4
     mkdir -p "$dir"; cp "$demo" "$dir/"
-    ( cd "$dir" && SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 600 "$bin" -home "$dir" \
+    ( cd "$dir" && SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 240 "$bin" -home "$dir" \
         -iwad "$iwad" -nosound -nomusic -noendtext \
         -timedemo "$(basename "$demo")" -testdump o.bin "$@" > out.txt 2>&1; echo $? > exit )
 }
 
-# run_wasm DIR IWAD DEMO [game args]
+# run_wasm DIR IWAD DEMO [game args]: wasm takes about 3 times the native time, so the
+# timeout is 5 times the native run plus a minute ($NATIVE_SECS, set by the caller);
+# a demo the game cannot open (it falls to the title loop, bugs.md L4) fails fast.
 run_wasm() {
-    local dir="$1" iwad="$2" demo="$3"; shift 3
+    local dir="$1" iwad="$2" demo="$3" wto; shift 3
+    wto=$(( ${NATIVE_SECS:-20} * 5 + 60 ))
     mkdir -p "$dir"
-    node "$root/tests/tools/run-wasm.js" --wasm "$wasmdir" --timeout 600 --iwad "$iwad" --demo "$demo" \
+    node "$root/tests/tools/run-wasm.js" --wasm "$wasmdir" --timeout "$wto" --iwad "$iwad" --demo "$demo" \
         --get o.bin="$dir/o.bin" --get o.bin.state="$dir/o.bin.state" \
         -- -timedemo "$(basename "$demo")" -testdump o.bin "$@" > "$dir/out.txt" 2>&1
     echo $? > "$dir/exit"
@@ -85,7 +88,7 @@ one() {
         t0=$(date +%s)
         run_native "$native" "$work/$name/native" "$iwad" "$demo"
         t1=$(date +%s)
-        run_wasm "$work/$name/wasm" "$iwad" "$demo"
+        NATIVE_SECS=$((t1-t0)) run_wasm "$work/$name/wasm" "$iwad" "$demo"
         t2=$(date +%s)
         local ne we ok=1 info
         ne="$(cat "$work/$name/native/exit")"; we="$(cat "$work/$name/wasm/exit")"
@@ -130,6 +133,7 @@ one() {
 demos=()
 for d in "$root"/testdata/demos/*.lmp; do
     [ -f "$d" ] || continue
+    [ -s "$d" ] || { echo "empty demo file $d (scripts/fetch-test-data.sh)" >&2; exit 2; }
     basename "$d" .lmp | grep -Eq "$only" && demos+=("$d")
 done
 [ ${#demos[@]} -gt 0 ] || { echo "no demos match '$only' (scripts/fetch-test-data.sh)" >&2; exit 2; }

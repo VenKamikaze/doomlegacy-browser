@@ -7,7 +7,7 @@
 #   tests/net/test-hot-join.sh --together      # baseline: both start together (-server 2)
 #   tests/net/test-hot-join.sh --bin FILE      # another game binary (e.g. the ASan build)
 #   tests/net/test-hot-join.sh --keep DIR      # keep the logs and dumps in DIR
-#   tests/net/test-hot-join.sh --bots          # also add a bot (FAILS today: bots are not restored by the join, bugs.md L21)
+#   tests/net/test-hot-join.sh --bots          # also add a bot (FAILS today: bots are not restored by the join, bugs.md L23)
 #   tests/net/test-hot-join.sh --state N       # also write the text state (-teststate N) of tic N on both machines
 #   tests/net/test-hot-join.sh --join-after N  # seconds of play before the client starts (default 10)
 #   tests/net/test-hot-join.sh --play N        # seconds of game time to compare after the join (default 40)
@@ -21,8 +21,11 @@
 # Pass when:
 #   - both instances were still running when the script stopped them;
 #   - the client's file starts at the join tic and holds at least --play seconds of tics;
+#   - the join race is forced (the server keeps its pause 5 tics longer, -testunpausedelay 5, so the
+#     unpause it announces names a later tic than the client has reached) and the client log shows the
+#     pending pause applied at the server's tic ("TEST: pause N applied at gametic ...");
 #   - every tic that both files have is identical (tests/tools/testdump-diff.py --common);
-#   - the server kept running the whole time (its file is longer than the client's end tic);
+#   - the server kept running the whole time (its last tic is within 5 of the client's);
 #   - the game was not idle: the client's files shows the P_Random index moving (monsters
 #     rolling dice) and the world changing;
 #   - neither log reports a consistency fault, a repair or a kick. (The client logs
@@ -85,7 +88,7 @@ check() { # check "name" status
 # game; -server 2 waits for a second player node. Bots give the game something to do.
 if [ "$together" = 1 ]; then nodes=2; else nodes=1; fi
 ( cd "$work/s" && exec "$bin" -home "$work/s" "${common[@]}" -server "$nodes" -udpport "$port_s" \
-    -warp 1 1 -testdump s.bin "${state[@]}" "${bots[@]}" > out.txt 2>&1 ) &
+    -warp 1 1 -testunpausedelay 5 -testdump s.bin "${state[@]}" "${bots[@]}" > out.txt 2>&1 ) &
 spid=$!; pids+=("$spid")
 echo "server: pid $spid, port $port_s"
 
@@ -127,10 +130,18 @@ sn="$(tics "$work/s/s.bin")"; cn="$(tics "$work/c/c.bin")"
 echo "server file: $sn records; client file: $cn records"
 check "the server was still running at the end" $((1 - s_alive))
 check "the client was still running at the end" $((1 - c_alive))
+if [ "$together" = 0 ]; then
+    check "the client applied a pending pause change at the server's tic (the race of L21 was forced)" \
+        $(grep -q "TEST: pause [0-9]* applied at gametic" "$work/c/out.txt" && echo 0 || echo 1)
+fi
 check "the client played at least $play s of tics ($cn >= $need)" $([ "$cn" -ge "$need" ] && echo 0 || echo 1)
 if [ "$cn" -gt 0 ] && [ "$sn" -gt 0 ]; then
     first="$(python3 -I "$root/tests/tools/testdump-diff.py" --info "$work/c/c.bin")"
     echo "client: $first"
+    slast="$(python3 -I "$root/tests/tools/testdump-diff.py" --info "$work/s/s.bin" | sed 's/.*\.\.//')"
+    clast="$(printf '%s' "$first" | sed 's/.*\.\.//')"
+    check "the server kept running: its last tic $slast is within 5 of the client's $clast" \
+        $([ "${slast:-0}" -ge $(( ${clast:-0} - 5 )) ] && echo 0 || echo 1)
     res="$(python3 -I "$root/tests/tools/testdump-diff.py" --common "$work/s/s.bin" "$work/c/c.bin")"; rc=$?
     echo "  compare: $res"
     check "every tic both files have is identical" $rc

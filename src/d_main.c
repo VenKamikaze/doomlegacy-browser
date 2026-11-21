@@ -1368,6 +1368,7 @@ void D_StartTitle(void)
     displayplayer = consoleplayer = statusbarplayer = 0;
     displayplayer_ptr = consoleplayer_ptr = &players[0]; // [WDJ]
     paused = 0;
+    CL_Clear_Pending_Pause();
     demo_ctrl = 0;  // enable screens and seq demos
     demosequence = -1;
     CON_ToggleOff();

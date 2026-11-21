@@ -100,9 +100,28 @@ static int cmp_ptr( const void * a, const void * b )
     return (pa < pb) ? -1 : (pa > pb) ? 1 : 0;
 }
 
+// Stopped platforms and crushers stay in the thinker list with function 0
+// (EV_StopPlat, EV_CeilingCrushStop, the savegame loader); they are live, and
+// are told apart by the activeplats and activeceilings lists.
 static int live_thinker( const thinker_t * th )
 {
-    return th->function != 0 && th->function != TFI_RemoveThinker;
+    return th->function != TFI_RemoveThinker;
+}
+
+static int in_active_plats( const thinker_t * th )
+{
+    const platlist_t * pl;
+    for( pl = activeplats; pl; pl = pl->next )
+        if( (const thinker_t *) pl->plat == th )  return 1;
+    return 0;
+}
+
+static int in_active_ceilings( const thinker_t * th )
+{
+    const ceilinglist_t * cl;
+    for( cl = activeceilings; cl; cl = cl->next )
+        if( (const thinker_t *) cl->ceiling == th )  return 1;
+    return 0;
 }
 
 static int mobj_function( const thinker_t * th )
@@ -306,8 +325,14 @@ static void hash_mobj( int ord, const mobj_t * mo )
 static void hash_effect( int ord, const thinker_t * th )
 {
     line_begin( "effect %d", ord );
+    int kind = th->function;
     F( fn, th->function );
-    switch( th->function )
+    if( kind == 0 )
+    {
+        if( in_active_plats( th ) )          kind = TFI_PlatRaise;
+        else if( in_active_ceilings( th ) )  kind = TFI_MoveCeiling;
+    }
+    switch( kind )
     {
      case TFI_MoveCeiling:
       {
@@ -488,6 +513,9 @@ static uint32_t hash_world( void )
         F( ceilx, s->ceiling_xoffs );  F( ceily, s->ceiling_yoffs );
         F( stairlock, s->stairlock );
         F( prevsec, s->prevsec );  F( nextsec, s->nextsec );
+        // soundtarget: read by A_Look, set by P_RecursiveSound. A savegame does
+        // not hold it (bugs.md L30), so a joined client has it NULL.
+        F( soundtarget, ord_of( s->soundtarget ) );
         line_end();
     }
     for( i = 0; i < numlines; i++ )
@@ -607,4 +635,20 @@ void TestDump_Init( void )
                 I_SoftError( "-teststate: cannot write %s\n", path );
         }
     }
+}
+
+int TestDump_UnpauseDelay( unsigned int now )
+{
+    static int n = -1;
+    static unsigned int until = 0;
+    if( n < 0 )
+    {
+        int p = M_CheckParm( "-testunpausedelay" );
+        n = ( p && M_IsNextParm() ) ? atoi( M_GetNextParm() ) : 0;
+    }
+    if( n <= 0 )  return 0;
+    if( until == 0 )  until = now + n;
+    if( now < until )  return 1;
+    until = 0;
+    return 0;
 }
