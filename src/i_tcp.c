@@ -188,6 +188,13 @@
 # endif
 #endif
 
+#ifdef __EMSCRIPTEN__
+// Emscripten has no IPX.
+# ifdef USE_IPX
+#   undef USE_IPX
+# endif
+#endif
+
 #ifdef __DJGPP__
 #include <lsck/lsck.h>
 #ifdef USE_IPX

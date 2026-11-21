@@ -182,7 +182,7 @@ set(SRC
   wi_stuff.c
   am_map.c
   md5.c
-  m_menu.c m_misc.c m_argv.c m_bbox.c m_fixed.c m_swap.c m_cheat.c m_random.c
+  m_menu.c m_misc.c m_argv.c m_bbox.c m_fixed.c m_swap.c m_cheat.c m_random.c test_dump.c
   console.c command.c
   p_saveg.c
   w_wad.c w_zip.c dehacked.c

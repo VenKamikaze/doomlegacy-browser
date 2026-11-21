@@ -35,7 +35,11 @@ This produces `build/native/bin/doomlegacy`, with `legacy.wad` copied next to it
 - Other builds:
   - `scripts/build-native.sh --build build/debug -- DEBUG=1` for a debug build;
   - `--clean` to rebuild from scratch.
-- The build keeps upstream's `-ffast-math` (`src/Makefile:1357`). Removing it is part of the determinism work.
+  - The ASan build is made by `tests/asan-demos.sh` (section 8).
+- **No `-ffast-math`.** Upstream adds it unconditionally (`src/Makefile:1357`) and there is no switch. Every flag source (`OPTS`, `OPTINC`, `make_options`) is reset or comes before it, so the build runs the compiler through `scripts/cc-no-fast-math.sh` (`CC_EXPLICIT_CMD`), which puts `-fno-fast-math` last on every command line (`gcc -Q --help=optimizers -ffast-math -fno-fast-math` shows `-funsafe-math-optimizations`, `-ffinite-math-only` and the rest disabled again, and `-fmath-errno` back on). To see it: `CC_WRAP_ECHO=1 scripts/build-native.sh --clean` prints each final command line.
+  - `scripts/build-native.sh --fast-math` builds as upstream does, into `build/native-fastmath`, for the comparison in `tests/demo-hash.sh --fast-math`.
+  - `REAL_CC` chooses the compiler and may carry flags: `REAL_CC="gcc -g -O0" scripts/build-native.sh --build build/dbg`.
+  - `CMakeLists.txt:86` still has `-ffast-math`; the project does not use CMake, so it was left alone.
 
 Running `make` in-tree with no options stops after writing a `make_options` file and asks you to edit it. That is upstream behaviour; the script avoids it.
 
@@ -104,8 +108,47 @@ source ~/.cache/doomlegacy-browser/emsdk/emsdk_env.sh
 
 **Smoke checks (19 Nov 2026):**
 - vnet: all 13 `ext/vnet/src/*.c` compile with no warnings under both `gcc` and `emcc`, with `-std=c11 -Wall -Wextra -D_POSIX_C_SOURCE=200809L -Iext/vnet/include -Iext/vnet/src`.
-- Game sources: `emcc -sUSE_SDL=2 -DSDL2 -DSMIF_SDL -DLINUX -c` on `src/*.c src/sdl/*.c`, as the survey reported:
-  - unmodified, 11 of 110 compile: the `strupr`/`strlwr` prototypes in `doomtype.h:183-186` clash with Emscripten's `compat/string.h`;
-  - with that guard extended to `!defined(__EMSCRIPTEN__)` (tried on a scratch copy only), 100 of 110 compile;
-  - the other 10 are the 6 files included into other files (`r_draw8/16/24/32`, `p_henemy`, `p_hpspr`) and 4 that need build settings (`i_tcp.c`: IPX; `v_video.c`, `w_wad.c`: `HWRENDER` symbols; `sdl/i_sound.c`: `HAVE_MIXER`, now available as a port).
-- No wasm build is wired up yet. That is the first brief's job.
+- Game sources: see the next sections; the survey's 100 of 110 files now all build and link.
+
+## 7. The wasm build
+
+```bash
+scripts/build-wasm.sh              # build/wasm/bin/doomlegacy.{js,wasm}, 4 jobs, about 25 s from scratch
+scripts/build-wasm.sh clean
+EM_CACHE=/tmp/cache scripts/build-wasm.sh   # a private Emscripten cache
+```
+
+- It needs the emsdk of section 6 (`scripts/setup-emsdk.sh --with-ports`). `EM_CACHE=DIR scripts/setup-emsdk.sh --with-ports` seeds a private cache the same way, which is the clean-cache check: with it empty to begin with, `scripts/build-wasm.sh` builds with no download (the SDL2, SDL2_mixer, Ogg and Vorbis ports come from the seeded cache; it also builds the libraries it needs into the cache once, about 40 s).
+- **The upstream Makefile is not used** (the native build is): for SDL it always defines `HWRENDER`, links `-lGL -lGLU` and asks the host's `sdl2-config` for flags, with no switch to leave them out. `scripts/wasm.mk` lists the sources instead: the native build's list without `hardware/*`, `sdl/ogl_sdl.c`, `sdl/hwsym_sdl.c` and `sdl/dosstr.c`, plus `sdl/i_nohwr.c` (stubs for the OpenGL symbols `sdl/i_video.c` refers to without a guard). Software renderer only (D5).
+- Flags: `-O2 -fno-strict-aliasing` (upstream's), no `-ffast-math`, `-DLINUX -DSDL2 -DSMIF_SDL -DHAVE_MIXER -sUSE_SDL=2 -sUSE_SDL_MIXER=2`. Not built in: zlib (compressed BSP nodes), libzip (pk3), `dlopen`, IPX. `-Ddetect_music_type=dl_detect_music_type` avoids a clash with the static SDL2_mixer. Link: 2 MB stack, 128 MB initial memory, growth allowed, `-sEXIT_RUNTIME=1`, `MODULARIZE` as `createDoomLegacy`, `FS`, `ENV` and `callMain` exported, `INVOKE_RUN=0`.
+- Source changes (D11), all behind `__EMSCRIPTEN__` except the two bug fixes: `src/doomtype.h` (the `strupr`/`strlwr` prototypes), `src/i_tcp.c` (no IPX), `src/m_menu.c` (no `ftw`: the `dirent` code), new `src/sdl/i_nohwr.c`; and `src/w_wad.c`, `src/v_video.c` (a build without `HWRENDER` did not compile, `bugs.md` L13).
+- `-testdump` and the rest of the test hooks are in `src/test_dump.c`, built into both.
+
+### Running it headless
+
+```bash
+node tests/tools/run-wasm.js --iwad testdata/doom1.wad --demo testdata/demos/d1demo3.lmp \
+     --get o.bin=/tmp/o.bin -- -timedemo d1demo3.lmp -testdump o.bin
+```
+
+- It starts headless Chromium (Playwright; do not install another one), serves `build/wasm/bin` and the data files from a local port, puts the IWAD, `common/legacy.wad` and the demo in MEMFS under `/work`, runs `callMain` with `-home /work -iwad /work/<iwad> -nosound -nomusic -noendtext` and your arguments, prints the game's output, copies the `--get` files out and exits with the game's status (124 on `--timeout`).
+- Why a browser and not Node: the SDL2 port's only video driver is the one for a web page; under Node `SDL_Init` fails (`screen` is not defined; with that faked, the gamepad code fails next). `SDL_AUDIODRIVER=dummy` does exist.
+- The game's loop does not return (ASYNCIFY and the yields are brief 02), so the page is blocked until the game exits. That is fine for a test and wrong for a user.
+- A missing `legacy.wad` or IWAD leaves the game in the launcher's "press ESC" loop (`bugs.md` L18): always pass `--timeout`.
+
+## 8. Tests of brief 00
+
+All run from the repository root and need `scripts/build-native.sh` and `scripts/fetch-test-data.sh` (the first four also `scripts/build-wasm.sh`). Each prints one line per check and exits 0 only if everything passed.
+
+| Test | What it does | Time here (4 cores) |
+|---|---|---|
+| `tests/demo-hash.sh` | All 11 demos, `-timedemo -testdump`, native and wasm, 3 at a time; compares the files record for record and prints the first differing tic and the state lines that differ. `--fast-math` also plays them on `build/native-fastmath` (information only). `--only REGEX`, `--jobs N`. | about 5.5 min (326 s measured); 7 min with `--fast-math` (413 s) |
+| `tests/draw-independence.sh` | One demo per IWAD, played with `-timedemo`, `-timedemo -nodraw` and `-playdemo` (real time): the three files must be identical. | 90 s |
+| `tests/net/test-hot-join.sh` | Two native instances on loopback: the server starts E1M1, a client joins after 10 s, gets the savegame and plays 40 s; their `-testdump` files must agree for every tic both have, from the client's first. `--together` starts both at once (`-server 2`); `--bots` adds a bot (fails today, `bugs.md` L23); `--state N` writes the text state of tic N on both. | 56 s (35 s together) |
+| `tests/asan-demos.sh` | Builds `build/asan` (ASan and UBSan, recover on), plays all 11 demos and groups the reports by site; a site not in `tests/asan-known.txt` fails the run. | see `00-baseline.md` |
+| `tests/sprite-column-oob.sh` (F1) | 10 s of `-warp 1 1` per IWAD at 8 and 24 bpp. | 60 s |
+| `scripts/run-headless.sh` | One demo, without `-testdump`: the game must behave as before and exit 0. | 63-206 s per demo |
+
+Helpers: `tests/tools/testdump-diff.py A B [--common]` compares two `-testdump` files (`--info A` prints the count); `tests/tools/state-diff.py A B` shows the first differing lines of two `-teststate` files with only the fields that differ; `tests/tools/sanitizer-sites.py` groups sanitizer reports; `tests/tools/run-wasm.js` is the headless runner above.
+
+The state hash itself (`-testdump FILE [-teststate FROM [TO]]`, what is in it and what is not) is in [`code-facts.md`](code-facts.md) section 11. Test-only: without the option nothing changes.

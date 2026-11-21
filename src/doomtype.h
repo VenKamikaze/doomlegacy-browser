@@ -180,7 +180,8 @@ typedef enum {
 #define min(x,y) ( ((x)<(y)) ? (x) : (y) )
 #define max(x,y) ( ((x)>(y)) ? (x) : (y) )
 
-# if !defined(__DJGPP__)
+# if !defined(__DJGPP__) && !defined(__EMSCRIPTEN__)
+// Emscripten's own <string.h> already declares strupr and strlwr.
 int strupr(char *n);
 int strlwr(char *n);
 # endif

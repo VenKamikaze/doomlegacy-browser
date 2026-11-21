@@ -577,6 +577,7 @@ extern consvar_t cv_netrepair;
 extern consvar_t cv_SV_download_files;
 extern consvar_t cv_SV_download_savegame;
 extern consvar_t cv_SV_netrepair;
+void CL_Clear_Pending_Pause( void );
 extern consvar_t cv_wait_players;
 extern consvar_t cv_wait_timeout;
 extern consvar_t cv_allownewplayer;

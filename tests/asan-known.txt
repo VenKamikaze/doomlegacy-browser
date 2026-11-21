@@ -1,0 +1,68 @@
+# Sanitizer sites already recorded in doco/browser/bugs.md (tests/asan-demos.sh, tests/net/test-hot-join.sh --bin build/asan/bin/doomlegacy).
+# One site per line: the key the scripts print, a space, the L number. A site that is
+# not here fails the run. Found on 21 Nov 2026 (gcc 13.3, the 11 demos and the hot-join test).
+
+global-buffer-overflow p_enemy.c:504 in CV_monster_OnChange L26
+global-buffer-overflow r_segs.c:2448 in R_RenderSegLoop L8
+ubsan g_game.c:2206:17 left shift of negative value N L10
+ubsan g_game.c:2207:17 left shift of negative value N L10
+ubsan i_system.c:575:68 left shift of negative value N L10
+ubsan p_enemy.c:2377:27 left shift of N by N places cannot be represented in type 'int' L10
+ubsan p_enemy.c:2378:48 left shift of N by N places cannot be represented in type 'int' L10
+ubsan p_enemy.c:2675:11 signed integer overflow: N + N cannot be represented in type 'int' L27
+ubsan p_enemy.c:2675:43 left shift of negative value N L10
+ubsan p_enemy.c:2693:13 signed integer overflow: N + N cannot be represented in type 'int' L27
+ubsan p_enemy.c:2693:53 left shift of negative value N L10
+ubsan p_enemy.c:2709:49 left shift of negative value N L10
+ubsan p_enemy.c:504:10 load of address ADDR with insufficient space for an object of type 'byte' L26
+ubsan p_enemy.c:504:36 index N out of bounds for type 'byte [N]' L26
+ubsan p_map.c:3836:30 left shift of N by N places cannot be represented in type 'int' L10
+ubsan p_mobj.c:1040:20 left shift of negative value N L10
+ubsan p_mobj.c:2730:19 left shift of negative value N L10
+ubsan p_mobj.c:2731:19 left shift of negative value N L10
+ubsan p_mobj.c:3116:19 left shift of negative value N L10
+ubsan p_mobj.c:3117:19 left shift of negative value N L10
+ubsan p_mobj.c:3263:40 left shift of negative value N L10
+ubsan p_mobj.c:3483:41 left shift of negative value N L10
+ubsan p_pspr.c:1037:46 left shift of negative value N L10
+ubsan p_pspr.c:848:57 left shift of negative value N L10
+ubsan p_pspr.c:878:59 left shift of negative value N L10
+ubsan p_saveg.c:1060:69 left shift of negative value N L10
+ubsan p_saveg.c:1077:69 left shift of negative value N L10
+ubsan p_saveg.c:1937:53 left shift of negative value N L10
+ubsan p_saveg.c:1938:56 left shift of negative value N L10
+ubsan p_saveg.c:2467:51 left shift of negative value N L10
+ubsan p_saveg.c:2468:51 left shift of negative value N L10
+ubsan p_saveg.c:3731:37 left shift of N by N places cannot be represented in type 'int' L10
+ubsan p_saveg.c:957:59 left shift of negative value N L10
+ubsan p_saveg.c:959:63 left shift of negative value N L10
+ubsan p_setup.c:1227:56 left shift of negative value N L10
+ubsan p_setup.c:1228:48 left shift of negative value N L10
+ubsan p_setup.c:367:33 left shift of negative value N L10
+ubsan p_setup.c:368:33 left shift of negative value N L10
+ubsan p_setup.c:447:57 left shift of N by N places cannot be represented in type 'int' L10
+ubsan p_setup.c:702:53 left shift of negative value N L10
+ubsan p_setup.c:703:57 left shift of negative value N L10
+ubsan p_setup.c:827:33 left shift of negative value N L10
+ubsan p_setup.c:828:33 left shift of negative value N L10
+ubsan p_setup.c:829:35 left shift of negative value N L10
+ubsan p_setup.c:830:35 left shift of negative value N L10
+ubsan p_setup.c:900:59 left shift of negative value N L10
+ubsan p_user.c:320:37 left shift of negative value N L10
+ubsan p_user.c:322:38 left shift of negative value N L10
+ubsan r_main.c:1078:41 left shift of negative value N L10
+ubsan r_main.c:677:40 left shift of negative value N L10
+ubsan r_plane.c:267:51 signed integer overflow: N + N cannot be represented in type 'int' L27
+ubsan r_segs.c:2448:23 signed integer overflow: N - N cannot be represented in type 'int' L8
+ubsan r_segs.c:2448:57 index N out of bounds for type 'fixed_t [N]' L8
+ubsan r_segs.c:2448:57 load of address ADDR with insufficient space for an object of type 'const fixed_t' L8
+ubsan r_segs.c:2754:54 signed integer overflow: N - N cannot be represented in type 'int' L27
+ubsan r_sky.c:189:22 index N out of bounds for type 'byte [N]' L28
+ubsan r_sky.c:196:49 index N out of bounds for type 'byte [N]' L28
+ubsan r_sky.c:197:46 index N out of bounds for type 'byte [N]' L28
+ubsan r_sky.c:198:44 index N out of bounds for type 'byte [N]' L28
+ubsan r_sky.c:199:44 index N out of bounds for type 'byte [N]' L28
+ubsan r_sky.c:201:33 index N out of bounds for type 'byte [N]' L28
+ubsan r_things.c:625:68 left shift of negative value N L10
+ubsan r_things.c:626:66 left shift of negative value N L10
+ubsan p_user.c:393:37 left shift of negative value N L10

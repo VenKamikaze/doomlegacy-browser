@@ -199,6 +199,7 @@
 #include "t_script.h"
 
 #include "b_game.h"	//added by AC for acbot
+#include "test_dump.h"
 
 
 
@@ -4594,6 +4595,8 @@ boolean G_CheckDemoStatus (void)
                      ,leveltime,time,f1/TICRATE,f2/f1);
         if( EV_restore_cv_vidwait != cv_vidwait.EV )
             CV_SetValue(&cv_vidwait, EV_restore_cv_vidwait);
+        if( testdump_active )
+            I_Quit();  // test-only: a timed demo under -testdump ends the game
         D_AdvanceDemo ();
         return true;
     }

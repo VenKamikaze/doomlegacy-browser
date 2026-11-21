@@ -1270,9 +1270,9 @@ void* W_CachePatchNum_Endian ( lumpnum_t lump, int ztag )
 // Called from many draw functions
 void* W_CachePatchNum ( lumpnum_t lumpnum, int ztag )
 {
+#ifdef HWRENDER
     MipPatch_t*   grPatch;
 
-#ifdef HWRENDER
     if( ! HWR_patchstore ) {
         return W_CachePatchNum_Endian ( lumpnum, ztag );
     }
@@ -1303,7 +1303,7 @@ void* W_CachePatchNum ( lumpnum_t lumpnum, int ztag )
     return (void*)grPatch;
 #else
     // Software renderer only, simplified
-    return W_CachePatchNum_Endian( lump, ztag );
+    return W_CachePatchNum_Endian( lumpnum, ztag );
 #endif
 }
 

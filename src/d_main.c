@@ -270,6 +270,7 @@
 #include "hardware/hw3sound.h"
 
 #include "b_game.h"
+#include "test_dump.h"
   //added by AC for acbot
 
 #ifdef FRENCH_INLINE
@@ -1367,6 +1368,7 @@ void D_StartTitle(void)
     displayplayer = consoleplayer = statusbarplayer = 0;
     displayplayer_ptr = consoleplayer_ptr = &players[0]; // [WDJ]
     paused = 0;
+    CL_Clear_Pending_Pause();
     demo_ctrl = 0;  // enable screens and seq demos
     demosequence = -1;
     CON_ToggleOff();
@@ -3468,6 +3470,8 @@ fatal_error_action:
            CONS_Printf (text[STATREG_NUM]);
          */
     }
+
+    TestDump_Init();  // test-only option -testdump
 
     // start the apropriate game based on parms
     p = M_CheckParm("-record");
