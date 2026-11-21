@@ -35,7 +35,11 @@ This produces `build/native/bin/doomlegacy`, with `legacy.wad` copied next to it
 - Other builds:
   - `scripts/build-native.sh --build build/debug -- DEBUG=1` for a debug build;
   - `--clean` to rebuild from scratch.
-- The build keeps upstream's `-ffast-math` (`src/Makefile:1357`). Removing it is part of the determinism work.
+  - The ASan build is made by `tests/asan-demos.sh` (section 8).
+- **No `-ffast-math`.** Upstream adds it unconditionally (`src/Makefile:1357`) and there is no switch. Every flag source (`OPTS`, `OPTINC`, `make_options`) is reset or comes before it, so the build runs the compiler through `scripts/cc-no-fast-math.sh` (`CC_EXPLICIT_CMD`), which puts `-fno-fast-math` last on every command line (`gcc -Q --help=optimizers -ffast-math -fno-fast-math` shows `-funsafe-math-optimizations`, `-ffinite-math-only` and the rest disabled again, and `-fmath-errno` back on). To see it: `CC_WRAP_ECHO=1 scripts/build-native.sh --clean` prints each final command line.
+  - `scripts/build-native.sh --fast-math` builds as upstream does, into `build/native-fastmath`, for the comparison in `tests/demo-hash.sh --fast-math`.
+  - `REAL_CC` chooses the compiler and may carry flags: `REAL_CC="gcc -g -O0" scripts/build-native.sh --build build/dbg`.
+  - `CMakeLists.txt:86` still has `-ffast-math`; the project does not use CMake, so it was left alone.
 
 Running `make` in-tree with no options stops after writing a `make_options` file and asks you to edit it. That is upstream behaviour; the script avoids it.
 

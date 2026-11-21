@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Hot join over UDP on loopback: two native instances on one machine.
+#
+#   tests/net/test-hot-join.sh                 # server, then a client joins a running game
+#   tests/net/test-hot-join.sh --together      # baseline: both start together (-server 2)
+#   tests/net/test-hot-join.sh --bin FILE      # another game binary (e.g. the ASan build)
+#   tests/net/test-hot-join.sh --keep DIR      # keep the logs and dumps in DIR
+#   tests/net/test-hot-join.sh --join-after N  # seconds of play before the client starts (default 10)
+#   tests/net/test-hot-join.sh --play N        # seconds of game time to compare after the join (default 40)
+#
+# The server runs Freedoom 1 E1M1 headless (dummy video, no sound) with two bots
+# and the level's monsters, and writes a -testdump file. After --join-after seconds
+# a client starts with -connect 127.0.0.1, receives the savegame and plays on; it
+# writes a -testdump file too. Real time, 35 tics a second, so a run takes about
+# --join-after + --play + start-up seconds, then the script stops both instances.
+#
+# Pass when:
+#   - both instances were still running when the script stopped them;
+#   - the client's file starts at the join tic and holds at least --play seconds of tics;
+#   - every tic that both files have is identical (tests/tools/testdump-diff.py --common);
+#   - the server kept running the whole time (its file is longer than the client's end tic);
+#   - neither log reports a consistency fault, a repair or a kick.
+# Exit status: 0 pass, 1 fail, 2 bad set-up.
+set -uo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+bin="$root/build/native/bin/doomlegacy"
+iwad="$root/testdata/freedoom1.wad"
+join_after=10
+play=40
+together=0
+keep=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --bin) bin="${2:?}"; shift 2 ;;
+        --together) together=1; shift ;;
+        --keep) keep="${2:?}"; shift 2 ;;
+        --join-after) join_after="${2:?}"; shift 2 ;;
+        --play) play="${2:?}"; shift 2 ;;
+        -h|--help) sed -n '2,/^set -uo/p' "${BASH_SOURCE[0]}" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
+        *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+    esac
+done
+[ -x "$bin" ] || { echo "no game binary at $bin (scripts/build-native.sh)" >&2; exit 2; }
+[ -f "$iwad" ] || { echo "no $iwad (scripts/fetch-test-data.sh)" >&2; exit 2; }
+bin="$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")"
+
+if [ -n "$keep" ]; then mkdir -p "$keep"; work="$(cd "$keep" && pwd)"; else
+    work="$(mktemp -d "${TMPDIR:-/tmp}/hot-join.XXXXXX")"; fi
+pids=()
+cleanup() {
+    for p in "${pids[@]}"; do kill -KILL "$p" 2>/dev/null; done
+    [ -n "$keep" ] || rm -rf "$work"
+}
+trap cleanup EXIT
+
+port_s=$((20000 + RANDOM % 20000)); port_c=$((port_s + 1))
+mkdir -p "$work/s" "$work/c"
+export SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+common=(-iwad "$iwad" -nosound -nomusic -noendtext -skill 3)
+
+tics() { # number of records in a dump
+    [ -f "$1" ] && echo $(( $(stat -c %s "$1") / 28 )) || echo 0
+}
+fail=0
+check() { # check "name" status
+    if [ "$2" = 0 ]; then echo "  ok   $1"; else echo "  FAIL $1"; fail=1; fi
+}
+
+# The server: -server 1 starts the game with the host alone and lets others join in
+# game; -server 2 waits for a second player node. Bots give the game something to do.
+if [ "$together" = 1 ]; then nodes=2; else nodes=1; fi
+( cd "$work/s" && exec "$bin" -home "$work/s" "${common[@]}" -server "$nodes" -udpport "$port_s" \
+    -warp 1 1 -testdump s.bin +addbot +addbot > out.txt 2>&1 ) &
+spid=$!; pids+=("$spid")
+echo "server: pid $spid, port $port_s"
+
+if [ "$together" = 0 ]; then
+    # wait for the game to be running, then let it play for a while
+    for _ in $(seq 1 60); do
+        [ "$(tics "$work/s/s.bin")" -gt $((join_after * 35)) ] && break
+        kill -0 "$spid" 2>/dev/null || break
+        sleep 1
+    done
+fi
+if ! kill -0 "$spid" 2>/dev/null; then
+    echo "the server exited early; its log ends:"; tail -5 "$work/s/out.txt"; exit 1
+fi
+join_server_tic="$(tics "$work/s/s.bin")"
+echo "client joins at server tic about $join_server_tic"
+( cd "$work/c" && exec "$bin" -home "$work/c" "${common[@]}" -connect 127.0.0.1 -udpport "$port_s" \
+    -clientport "$port_c" -testdump c.bin > out.txt 2>&1 ) &
+cpid=$!; pids+=("$cpid")
+
+# wait until the client has played $play seconds of tics, up to a limit
+need=$((play * 35)); limit=$((play + 90))
+for _ in $(seq 1 "$limit"); do
+    [ "$(tics "$work/c/c.bin")" -ge "$need" ] && break
+    kill -0 "$cpid" 2>/dev/null || break
+    kill -0 "$spid" 2>/dev/null || break
+    sleep 1
+done
+sleep 1
+s_alive=1; c_alive=1
+kill -0 "$spid" 2>/dev/null || s_alive=0
+kill -0 "$cpid" 2>/dev/null || c_alive=0
+for p in "$cpid" "$spid"; do kill -TERM "$p" 2>/dev/null; done
+sleep 2
+for p in "$cpid" "$spid"; do kill -KILL "$p" 2>/dev/null; done
+wait 2>/dev/null
+
+sn="$(tics "$work/s/s.bin")"; cn="$(tics "$work/c/c.bin")"
+echo "server file: $sn records; client file: $cn records"
+check "the server was still running at the end" $((1 - s_alive))
+check "the client was still running at the end" $((1 - c_alive))
+check "the client played at least $play s of tics ($cn >= $need)" $([ "$cn" -ge "$need" ] && echo 0 || echo 1)
+if [ "$cn" -gt 0 ] && [ "$sn" -gt 0 ]; then
+    first="$(python3 -I "$root/tests/tools/testdump-diff.py" --info "$work/c/c.bin")"
+    echo "client: $first"
+    res="$(python3 -I "$root/tests/tools/testdump-diff.py" --common "$work/s/s.bin" "$work/c/c.bin")"; rc=$?
+    echo "  compare: $res"
+    check "every tic both files have is identical" $rc
+fi
+faults='consistency (fault|failure)|desync|out of sync|Client repair|random index|Kick (node|player)|savegame failed|Can.t load the level'
+if grep -qiE "$faults" "$work/s/out.txt" "$work/c/out.txt" 2>/dev/null; then
+    check "no consistency fault or repair in the logs" 1
+    grep -iE "$faults" "$work/s/out.txt" "$work/c/out.txt" | head -5
+else
+    check "no consistency fault or repair in the logs" 0
+fi
+if [ "$fail" = 0 ]; then echo "hot-join: PASS"; else echo "hot-join: FAIL"; [ -n "$keep" ] || echo "(use --keep DIR to keep the logs)"; fi
+exit "$fail"

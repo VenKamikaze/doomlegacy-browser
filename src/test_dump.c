@@ -318,9 +318,9 @@ static void hash_effect( int ord, const thinker_t * th )
         F( oldspeed, c->oldspeed );  F( crush, c->crush );
         F( dir, c->direction );  F( olddir, c->olddirection );
         F( tag, c->tag );
-        F( newspecial, c->new_sec_special );
-        F( oldspecial, c->old_sec_special );
-        F( newpic, c->new_ceilingpic );
+        // new_sec_special, old_sec_special and new_ceilingpic are only set by
+        // some makers (the zone does not clear blocks) and only copied into the
+        // sector when the move ends, which the sector hash then shows.
       }
       break;
      case TFI_VerticalDoor:
@@ -329,8 +329,13 @@ static void hash_effect( int ord, const thinker_t * th )
         F( sector, sector_num( d->sector ) );
         F( line, line_num( d->line ) );
         F( type, d->type );  F( top, d->topheight );  F( speed, d->speed );
-        F( dir, d->direction );  F( topwait, d->topwait );
-        F( countdown, d->topcountdown );  F( lighttag, d->lighttag );
+        F( dir, d->direction );
+        // topcountdown is read only while waiting (0) or in the initial wait (2),
+        // and the door makers (p_doors.c) leave it, and topwait, unset otherwise:
+        // the zone does not clear blocks, so there it holds whatever was there.
+        if( d->direction == 0 || d->direction == 2 )
+            F( countdown, d->topcountdown );
+        F( lighttag, d->lighttag );
       }
       break;
      case TFI_MoveFloor:
@@ -340,9 +345,8 @@ static void hash_effect( int ord, const thinker_t * th )
         F( type, f->type );  F( crush, f->crush );
         F( dest, f->floordestheight );  F( speed, f->speed );
         F( dir, f->direction );
-        F( newspecial, f->new_sec_special );
-        F( oldspecial, f->old_sec_special );
-        F( newpic, f->new_floorpic );  F( newtype, f->new_floortype );
+        // new_sec_special, old_sec_special, new_floorpic and new_floortype:
+        // as for ceilings.
       }
       break;
      case TFI_PlatRaise:
@@ -351,8 +355,12 @@ static void hash_effect( int ord, const thinker_t * th )
         F( sector, sector_num( p->sector ) );
         F( type, p->type );  F( speed, p->speed );
         F( low, p->low );  F( high, p->high );  F( crush, p->crush );
-        F( tag, p->tag );  F( wait, p->wait );  F( count, p->count );
-        F( status, p->status );  F( oldstatus, p->oldstatus );
+        F( tag, p->tag );  F( wait, p->wait );
+        F( status, p->status );
+        // count is read only while waiting, oldstatus only after a stop; the
+        // makers (p_plats.c) leave them unset otherwise.
+        if( p->status == PLATS_waiting )   F( count, p->count );
+        if( p->status == PLATS_in_stasis ) F( oldstatus, p->oldstatus );
       }
       break;
      case TFI_LightFlash:
