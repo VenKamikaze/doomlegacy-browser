@@ -925,6 +925,11 @@ void P_LoadThings (int lump)
     // [WDJ] Do endian as read from temp things lump
     nummapthings     = W_LumpLength(lump) / sizeof(doom_mapthing_t);
     mapthings        = Z_Malloc(nummapthings * sizeof(mapthing_t), PU_LEVEL, NULL);
+    // P_SpawnPlayer searches mapthings for the player's other start points,
+    // while the loop below has filled only the things before the current one.
+    // Zone blocks are not cleared, so the unfilled things must be, otherwise stale
+    // contents can look like player starts and spawn extra voodoo dolls.
+    memset( mapthings, 0, nummapthings * sizeof(mapthing_t) );
 
     if( !data || (nummapthings < 1))
     {
