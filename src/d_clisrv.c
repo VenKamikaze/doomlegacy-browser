@@ -3912,6 +3912,17 @@ void D_Quit_NetGame (void)
 #endif
 }
 
+// The state D_Quit_NetGame leaves behind, for a driver that closed the
+// connection itself (D_CloseConnection) because nothing it sends can be
+// acknowledged: the vnet driver after a relay failure.  Without it
+// CL_ConnectToServer does not notice that the connection is gone
+// (it waits for network_state < NETS_connecting).
+void D_Quit_NetGame_Closed (void)
+{
+    cl_server_state = NOS_idle;
+    network_state = NETS_shutdown;
+}
+
 // By Server.
 // Add a node to the game (player will follow at map change or at savegame....)
 //  set_nnode_state : the new nnode_state

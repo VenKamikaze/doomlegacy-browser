@@ -266,6 +266,7 @@ typedef struct sockaddr_ipx {
 #include "m_argv.h"
 #include "command.h"
 #include "d_main.h"
+#include "i_vnet.h"
 
 #include "doomstat.h"
 #include "mserv.h" //Hurdler: support master server
@@ -1503,6 +1504,13 @@ boolean SOCK_OpenSocket( void )
 void I_Init_TCP_Network( void )
 {
     char     serverhostname[255];
+
+    if( I_VNet_Requested() )
+    {
+        // -relay: the network driver is vnet, not UDP.
+        I_Init_VNet_Network();
+        return;
+    }
 
 #ifdef USE_IPX
     ipx_select = M_CheckParm("-ipx");

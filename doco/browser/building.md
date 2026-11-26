@@ -28,6 +28,7 @@ scripts/build-native.sh
 
 This produces `build/native/bin/doomlegacy`, with `legacy.wad` copied next to it. It takes about 11 s on 4 cores and gives 11 warnings, all `-Wunused-result` or `-Wdangling-pointer` in upstream code.
 
+- `ext/vnet/src/*.c` (13 files) are compiled in as `vnet-*.o` with vnet's own flags (`-std=c11 -D_POSIX_C_SOURCE=200809L -Iext/vnet/include -Iext/vnet/src`, `-O2 -Wall -Wextra`, through the same compiler wrapper, so without `-ffast-math`), and `src/i_vnet.c` with `-DUSE_VNET`; the rules are the block after `MOBJS` and the one after the `hardware/%.c` rule in `src/Makefile`. Without `ext/vnet` checked out (`git submodule update --init`) `i_vnet.c` is built as stubs that refuse `-relay`.
 - The options are in `scripts/make_options_native`: `OS=LINUX SMIF=SDL SDL2=1 HAVE_MIXER=1`, and `ARCH=` empty, because `make_options_nix` defaults to `-march=i686`.
 - The script runs the upstream Makefile with `BUILD=build/native MAKE_OPTIONS=scripts/make_options_native`.
   - It runs `make depend` serially first. The dependency rules all write one temp file (`dep/sed.dep`), so they fail under `-j`.
@@ -152,3 +153,31 @@ All run from the repository root and need `scripts/build-native.sh` and `scripts
 Helpers: `tests/tools/testdump-diff.py A B [--common]` compares two `-testdump` files (`--info A` prints the count); `tests/tools/state-diff.py A B` shows the first differing lines of two `-teststate` files with only the fields that differ; `tests/tools/sanitizer-sites.py` groups sanitizer reports; `tests/tools/run-wasm.js` is the headless runner above.
 
 The state hash itself (`-testdump FILE [-teststate FROM [TO]]`, what is in it and what is not) is in [`code-facts.md`](code-facts.md) section 11. Test-only: without the option nothing changes.
+
+## 9. The relay and the network tests of brief 01
+
+```bash
+scripts/build-relay.sh        # build/relay/vnet-relay (Go 1.24; modules from the Go proxy; about 1 s when cached)
+```
+
+The relay is built outside the source tree and is never committed. Run it by hand with `build/relay/vnet-relay -udp 127.0.0.1:7777 -http "" -v` (the first line it prints, `LISTEN udp=...`, has the port; `-udp 127.0.0.1:0` picks a free one). Flags worth knowing: `-max-members N` (default 8), `-keepalive` and `-session-timeout` (default 5 s and 15 s). `ext/vnet/relay/README.md` has the rest.
+
+**Playing through it** (every player, native):
+
+```bash
+build/native/bin/doomlegacy -iwad testdata/freedoom1.wad -relay 127.0.0.1:7777 -server 2 -warp 1 1   # creates a room and prints: vnet: room code ABC234 (you are 10.0.0.1; the room takes 8 players)
+build/native/bin/doomlegacy -iwad testdata/freedoom1.wad -relay 127.0.0.1:7777 -connect ABC234       # joins it; joining a game in progress works too
+```
+
+- `-relay HOST:PORT` is the relay's UDP address; a host name is resolved once, at start-up. With `-server [N]` or `-dedicated` the machine creates the room and is the server (`10.0.0.1`); with `-connect CODE` it joins the room and connects to its server. `-connect` with no code (the LAN search) is refused. `-udpport` is the server's port, as over UDP; a joiner needs the same one.
+- `VNET_IMPAIR="lat=30,jit=10,loss=3,dup=2,reorder=3,seed=N"` in a process's environment makes vnet delay, lose, duplicate and reorder what that process sends; give each process its own `seed`. The game prints the impairment it found when it opens the room, and when it leaves the room a line with what vnet did (`vnet: closed ...: sent N datagrams (impairment lost .., duplicated .., reordered ..) ...`).
+- Messages go to stdout (flushed) and to the console, each starting `vnet:`. How a failure ends: `code-facts.md` §13.
+
+| Test | What it does | Time here (4 cores) |
+|---|---|---|
+| `tests/net/test-relay.sh` | Own relay on a port the relay picks; a server (`-server 2`), a client that joins at the start, a third player that joins the game in progress after 10 s; every `-testdump` file must agree with the server's for every tic it has, with at least 30 s after the join, no consistency fault in any log. Then the same with `VNET_IMPAIR` on every process (default `lat=30`, a seed per process; it checks that vnet itself logged taking the variable on all three, and, for a spec that names them, that datagrams really were lost, duplicated and reordered). The full spec (`--impair lat=30,jit=10,loss=3,dup=2,reorder=3`) does not pass reliably: the game's join in progress is not robust against reordered or lost packets, over UDP too (`bugs.md` L31, L35); making it pass is fix chunk F4's. The clean case passed 5 of 5. `--clean-only`, `--impair-only`, `--runs N`, `--impair SPEC`, `--dedicated`, `--bin FILE`, `--keep`, `--state FROM TO`. | 45 s per clean case, 50 s per impaired case |
+| `tests/net/test-relay.sh --dedicated` | A `-dedicated -server 2` server and two players: the state before the first level only, because a dedicated server crashes when it loads one (`bugs.md` L33) | 45 s |
+| `tests/net/test-relay-errors.sh` | Bad arguments, a relay nobody listens on (server, joiner, dedicated), a room that does not exist, a full room (the relay's limit and the game's own `sv_maxplayers`), the relay killed during a game (also with a `-dedicated` server), a silent member dropped by the relay, the host killed, a host that never answers. Each has a time limit and checks the message and what the game does next. `--only REGEX`, `--list`, `--bin FILE`. | about 2 min |
+
+`tests/net/lib.sh` has what both share (the relay, the games, stopping every process they started: a test fails if one had to be killed or is left running). The tests use real time and a full core per game: run nothing else at the same time.
+

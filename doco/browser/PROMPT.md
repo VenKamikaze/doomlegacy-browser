@@ -9,10 +9,11 @@ You work **one chunk at a time**. For each chunk you write a brief, have it impl
 
 ## 0. Where things stand (hand-off: update this after every merge)
 
-**21 Nov 2026.** The set-up, F1 and **brief 00** are done and merged into `claudeai` (00 by the `--no-ff` merge of `browser/00-baseline`). Next is **01**, then F2 and F3 (§3).
+**26 Nov 2026.** The set-up, F1, **brief 00** and **brief 01** are done and merged into `claudeai` (each brief by a `--no-ff` merge of its `browser/NN-*` branch). Next is **F2**, then F3, 02, 03, F4 before 04 (§3).
 
 - The repository is tidied into upstream's SVN trunk layout (r1749). `main` keeps the pristine extract of the release archives (`b1daf91`).
 - vnet is at `ext/vnet` (`v0.5.0`, `8572c74`). Its datagrams are unordered (`ext/vnet/README.md:17`).
+- **vnet driver (01):** `src/i_vnet.c` and `src/i_vnet.h` fill the driver table; `-relay HOST:PORT` with `-server [N]`/`-dedicated` creates a room (this machine is `10.0.0.1`, the server), `-connect CODE` joins one. A relay failure ends the network game and returns to the title screen without a wait (`D_Quit_NetGame_Closed`). The wasm build compiles `i_vnet.c` as stubs; brief 04 makes it real there. `code-facts.md` §13 says what a lobby (05) must add. `scripts/build-relay.sh` builds the Go relay into `build/relay/`.
 - **Builds:**
   - `scripts/build-native.sh` builds without `-ffast-math` and with `-ffp-contract=off` (through `scripts/cc-no-fast-math.sh`), `--fast-math` for upstream's flags; a flags stamp forces a clean rebuild when they change.
   - `scripts/build-wasm.sh` (`scripts/wasm.mk`, its own makefile: upstream forces `HWRENDER` for SDL): software renderer, about 8 s from clean. No page yet; the game loop blocks the page until it exits (ASYNCIFY yields are brief 02's).
@@ -21,22 +22,23 @@ You work **one chunk at a time**. For each chunk you write a brief, have it impl
   - `tests/draw-independence.sh`: drawing doesn't touch the simulation;
   - `tests/net/test-hot-join.sh`: two native instances over UDP on loopback, a client joining a game in progress (forced race by default; `--together`, `--no-force`; `--bots` fails until F3);
   - `tests/asan-demos.sh`: ASan and UBSan with recovery, every known site in `tests/asan-known.txt` (53 sites);
-  - `tests/sprite-column-oob.sh` (6/6), `scripts/run-headless.sh` (a demo to its end, exit 0).
+  - `tests/sprite-column-oob.sh` (6/6), `scripts/run-headless.sh` (a demo to its end, exit 0);
+  - `tests/net/test-relay.sh`: three native players through a local relay, one joining in progress (`--impair SPEC`, default `lat=30`; `--dedicated`); `tests/net/test-relay-errors.sh`: 52 checks of the relay failures, each bounded and each checking the title screen.
 - **Facts:** [`code-facts.md`](code-facts.md) checks every survey claim with file:line refs and covers the network, the join, the pause handling, the blocking loops, the floats, the savegame and the music path. Read it before writing a brief.
-- **Bugs:** `bugs.md` L1-L31. Fixed inside 00 (smallest fixes, upstream-style commits on `browser/00-baseline`, no `fix/` branches): L13 (build without `HWRENDER`), L15 (`P_LoadThings`), L21 (a joining client's pause timing; now a queue ordered by tic), L22 (`dropoffz` in the savegame). **Queued:** F2 = L19 + L30, F3 = L23 + L24. **For brief 04:** L29 (a slow joiner diverges), L31 (`PT_STATE` has no sequence number).
+- **Bugs:** `bugs.md` L1-L35. Fixed inside 00 (smallest fixes, upstream-style commits on `browser/00-baseline`, no `fix/` branches): L13 (build without `HWRENDER`), L15 (`P_LoadThings`), L21 (a joining client's pause timing; now a queue ordered by tic), L22 (`dropoffz` in the savegame). **Queued:** F2 = L19 + L30, F3 = L23 + L24, F4 = L31 + L35. **For brief 04:** L29 (a slow joiner diverges). Found in 01, logged only: L32 (`I_Error` at start-up with `-server` segfaults; `i_vnet.c` works around it), L33 (a `-dedicated` server crashes on its first level load, also over UDP), L34 (the UDP driver's 512-byte limit is overwritten, so UDP always used 1,450).
 - **Decisions D1-D12 and the answers Q1-Q5** are in [`README.md`](README.md). The main ones:
   - joining a game in progress is in scope;
   - music is in the first release, played through OPL3 emulation with the IWAD's `GENMIDI` bank;
   - test data is Freedoom and `DOOM1.WAD`;
   - the git model is `claudeai`, `browser/NN-*` and `fix/*`.
 - **Not checked yet:** whether upstream SVN has fixed L1, L13, L15, L21 or L22, and whether its maintainer accepts patches. SourceForge can't be read from the cloud container; the user can check (F1's Outcome has the command).
-- **Next:** brief 01 (vnet transport, native), once the user says go.
+- **Next:** brief F2 (portable savegame between x86_64 and wasm32, `bugs.md` L19 and L30), once the user says go.
 
 ## 1. Read first, in this order
 
 1. [`README.md`](README.md): the status table, decisions D1-D12, answers Q1-Q5 and the git rules. Don't reopen a settled decision inside a chunk. If one proves wrong, stop and ask the user.
 2. [`building.md`](building.md): set-up, builds, test data, the headless run and Emscripten. Everything there was checked on 19-21 Nov 2026.
-3. [`bugs.md`](bugs.md): the upstream bugs and quirks found so far (L1-L12).
+3. [`bugs.md`](bugs.md): the upstream bugs and quirks found so far (L1-L35).
 4. [`survey.md`](survey.md): the feasibility survey. It covers the network seam (`d_net.c:107-113`), hot join (`d_clisrv.c:2348`, `2570-2600`), the blocking loops, the floats in gameplay, `-ffast-math`, and other file:line refs. Its claims are **unverified** until a chunk checks them.
 5. [`F1-sprite-column-oob.md`](F1-sprite-column-oob.md): a finished brief, as a model of the format (Goal, In scope, Out of scope, Acceptance criteria, Tests, Outcome).
 6. jfsw-browser's `doco/browser/` (on its `claude` branch, the default) is the model this project follows. Read its `README.md`, `PROMPT.md`, `code-facts.md`, `bugs.md` and the briefs that match the chunk at hand (01 vnet transport, 02 Emscripten port, 03 data download, 04 browser netplay, 05 host and join, 06 deployment, and the hidden-tab and lag work). Reuse what was learnt there; don't copy its code wholesale.
@@ -62,6 +64,7 @@ You work **one chunk at a time**. For each chunk you write a brief, have it impl
 | 01 | **vnet transport (native)** | A new `i_vnet.c` that fills the driver table in `d_net.c:107-113`. Cap the packet length at vnet's 1,100 bytes. The room creator is the server (D4). Plain UDP stays. Two or three native instances play through a local vnet relay, hot join included. vnet's datagrams are unordered (`ext/vnet/README.md:17`): mind `bugs.md` L31. |
 | F2 | **Portable savegame** (`bugs.md` L19, L30) | Queued by the user (21 Nov 2026), after 01. Write the sector-effect thinkers field by field so a wasm32 client can load an x86_64 host's savegame, and save sectors' `soundtarget`. Keep reading old saves. Test: a native build saves mid-game, the wasm build loads it, and the `-testdump` records match from there. Estimate: about a third of 00. |
 | F3 | **Bots and hot join** (`bugs.md` L23, L24) | Queued by the user (21 Nov 2026), after F2. Save the rest of `bot_t`; fix `Command_AddBot`'s buffer. `tests/net/test-hot-join.sh --bots` must pass. Estimate: about a quarter of 00, more if the test exposes other bot state. |
+| F4 | **Hot join over a lossy link** (`bugs.md` L31, L35) | Queued by the user (26 Nov 2026), before 04. Brief 01 stopped on its AC4: with loss, duplication or reordering the join in progress diverges, over plain UDP as well. Add a sequence number to `PT_STATE` and order the client's pause queue by (gametic, sequence); find and fix the cause of L35 (non-zero ticcmds on the joiner's first tics; a late `PT_SERVERTICS` from before the join is the first suspect). `tests/net/test-relay.sh --impair lat=30,jit=10,loss=3,dup=2,reorder=3` must pass at least five runs in five and becomes the default again, and `tests/net/test-hot-join.sh` gets a lossy mode. Estimate: about a third of 00; more if L35 is deeper. |
 | 02 | **Emscripten port** | Software renderer (no `HWRENDER`), SDL2, sound effects, ASYNCIFY yields in the blocking loops (D6), IDBFS for config and saves, a minimal page. The native-against-wasm hash from 00 must still match. |
 | 03 | **Data download** | The page fetches the IWAD (D7), caches it in IndexedDB and puts it on the WAD search path, with a file picker for people's own copies. Freedoom and `DOOM1.WAD` must be served from the page's own origin or a host that allows CORS. Ask the user which data the public page offers. |
 | M1 | **OPL music** | Q5 in the README: Chocolate Doom's GPL OPL player and the Nuked OPL3 emulator (LGPL), driven by the IWAD's `GENMIDI` bank, natively and in the browser. The README lists the questions to answer. Audio starts only after a user gesture. |

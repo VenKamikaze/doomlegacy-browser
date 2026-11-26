@@ -33,7 +33,7 @@ SRC_MAIN := screen v_video r_draw r_plane r_segs r_sky r_things r_splats \
   mserv b_game b_look b_node b_search g_input g_game f_finale f_wipe wi_stuff \
   am_map md5 m_menu m_misc m_argv m_bbox m_fixed m_swap m_cheat m_random \
   console command p_saveg tables info infoext dstrings dehacked w_wad w_zip \
-  d_netcmd d_clisrv d_net d_netfil i_tcp d_items d_main test_dump
+  d_netcmd d_clisrv d_net d_netfil i_tcp i_vnet d_items d_main test_dump
 SRC_SDL  := i_system i_video i_sound i_net filesrch endtxt i_main i_nohwr
 SRC_UMI  := doom_umi_api doom_umi_parser doom_umi_lexer doom_umi_keywords
 

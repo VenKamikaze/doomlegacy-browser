@@ -186,7 +186,7 @@ set(SRC
   console.c command.c
   p_saveg.c
   w_wad.c w_zip.c dehacked.c
-  d_netcmd.c d_clisrv.c d_net.c d_netfil.c i_tcp.c
+  d_netcmd.c d_clisrv.c d_net.c d_netfil.c i_tcp.c i_vnet.c
   d_items.c d_main.c)
 
 add_executable(doomlegacy ${SRC})

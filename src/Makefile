@@ -1403,6 +1403,18 @@ d_netcmd.o d_clisrv.o d_net.o d_netfil.o i_tcp.o \
 d_items.o d_main.o \
 test_dump.o
 
+# vnet (ext/vnet, a submodule): the network driver on a relay room, i_vnet.c.
+# All of vnet's src/*.c are built, with vnet's own flags (C11, POSIX 2008), as
+# vnet-NAME.o; i_vnet.c is built with USE_VNET and vnet's include path.
+# Without ext/vnet checked out, i_vnet.c is built as stubs that refuse -relay.
+VNETDIR?=../ext/vnet
+ifneq ($(wildcard $(VNETDIR)/include/vnet.h),)
+VNET_OBJS:=$(patsubst $(VNETDIR)/src/%.c,vnet-%.o,$(wildcard $(VNETDIR)/src/*.c))
+else
+VNET_OBJS:=
+endif
+MOBJS+=i_vnet.o $(VNET_OBJS)
+
 ifdef UMAPINFO_DIR
 # UMAPINFO directory
 UMIOBJS:= doom_umi_api.o doom_umi_parser.o doom_umi_lexer.o doom_umi_keywords.o
@@ -1560,6 +1572,15 @@ $(O)/%.o: $(SD)$(INTERFACE)/%.c
 
 $(O)/%.o: $(SD)hardware/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# vnet: its own files with its own flags, and the driver that uses it.
+ifneq ($(VNET_OBJS),)
+$(O)/vnet-%.o: $(VNETDIR)/src/%.c
+	$(CC) -O2 $(if $(DEBUG),-g) -Wall -Wextra -std=c11 -D_POSIX_C_SOURCE=200809L -I$(VNETDIR)/include -I$(VNETDIR)/src -c $< -o $@
+
+$(O)/i_vnet.o: $(SD)i_vnet.c $(SD)i_vnet.h $(wildcard $(VNETDIR)/include/*.h)
+	$(CC) $(CFLAGS) $(SND_DEVS) -DUSE_VNET -I$(VNETDIR)/include -c $< -o $@
+endif
 
 ifeq ($(SMIF), OS2_NATIVE)
 # OS2 rules
