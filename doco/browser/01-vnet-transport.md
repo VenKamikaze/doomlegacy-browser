@@ -90,7 +90,7 @@ The simulation does not change. The transport must not either: no packet is chan
 
 ## Outcome
 
-Status: **AC4 narrowed by the user (26 Nov 2026) to latency only; full AC4 moved to F4.** Under review. The implementer's report as it stood when it stopped:
+Status: **done, 26 Nov 2026.** AC4 narrowed by the user to latency only; the full AC4 moved to F4. Three independent reviews (the last: merge), two fix rounds, coordinator verification below. The implementer's report as it stood when it stopped:
 
 Status was: **stopped for a decision.** Everything in scope works and is tested, except that the impaired three-player game (AC4) does not pass reliably: at the brief's modest values the join in progress diverges in about 40% of the runs, and the cause is in the game's own join protocol (`bugs.md` L31, L35), reproduced over plain UDP with no vnet involved. The brief says to stop and report when that cause is bigger than a small fix; it is. Branch `browser/01-vnet-transport`, pushed, not merged.
 
@@ -165,3 +165,35 @@ The first fix round had a regression. `vn_end_game` called `D_CloseConnection()`
 - **Relay dying during the join, not covered.** I tried a case that kills the relay when the joiner has entered the room and before its first tic (it had written 0 tics): it passed on the broken build too, so it proves nothing about the regression and I removed it rather than keep a check that cannot fail. The savegame download itself is fast on loopback and has no marker in the log, so it cannot be hit reliably; the download state is in the same `CL_ConnectToServer` loop with the same exit condition, but this is not tested directly.
 
 **Results** (one test at a time): native build from clean 11 s, the same 11 warnings as before, none in `i_vnet.c`, `d_clisrv.c` or vnet. `test-relay-errors.sh` three times: PASS each, 52 checks, 144 s; relay-dies 3, 3, 3 s; relay-dies-dedicated 3, 3, 3 s; relay-drops 0, 0, 0 s. `test-relay.sh --runs 2`: clean 45, 45 s and impaired (`lat=30`) 51, 51 s, all PASS (B 1,091 to 1,108 records). `--dedicated`: PASS 44 s. `test-hot-join.sh` default: PASS 56 s (1,442 records, tics 361 to 1,802).
+
+## Review and coordinator verification (26 Nov 2026)
+
+**Review.** An independent reviewer read the brief, the code and the tests in its own worktree, three times.
+- Round 1, on `a2a5af6`: "merge after fixes". It found four problems:
+  - a 5 s freeze on every relay failure;
+  - a "joined in progress" check that could never fail;
+  - an impairment check that did not show vnet took the impairment;
+  - wrong notes on the lobby path.
+- Round 2, on `f4306ab`: "do not merge". The first fix left a joiner whose relay failed stuck on the connect screen.
+- Round 3, on `7268da8`: "merge". Fix round 2 added `D_Quit_NetGame_Closed`. The new title-screen checks fail without it, and the wasm build compiles.
+- The original implementer could not be reached after a container restart, so a second implementer did both fix rounds from the review's findings.
+
+**Coordinator verification** on `7268da8`. Builds from clean, everything run one at a time on an otherwise idle 4-core machine:
+
+| Check | Result | Time |
+|---|---|---|
+| Native build from clean | built | 11 s |
+| Wasm build from clean | built | 9 s |
+| Relay build | built | 1 s |
+| `tests/net/test-relay.sh --clean-only --runs 5` (AC3) | 5 of 5 PASS (for example server 1,460 records, B from tic 369) | 224 s |
+| `tests/net/test-relay.sh --impair-only --runs 3` (AC4, `lat=30`) | 3 of 3 PASS | 153 s |
+| `tests/net/test-relay.sh --dedicated` | PASS | 44 s |
+| `tests/net/test-relay-errors.sh` | PASS, 52 checks | 144 s |
+| `tests/net/test-hot-join.sh` default, `--together`, `--no-force` | PASS each | 56, 45, 57 s |
+| `tests/sprite-column-oob.sh` | 6 of 6 | 60 s |
+| `tests/draw-independence.sh` | PASS | 92 s |
+| `tests/demo-hash.sh` (native against wasm) | 11 of 11 identical | 336 s |
+| `tests/asan-demos.sh` | 53 known sites, 0 new | 234 s |
+| Fresh `git clone --recurse-submodules` of the branch, native build | built | 13 s |
+
+No game or relay process was left over. I read the code diff of each fix round myself.

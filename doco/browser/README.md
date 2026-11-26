@@ -18,7 +18,7 @@ The goal is Doom Legacy playable in a browser (Emscripten/WASM), **with its musi
 | F1 | [Sprites crash the 24/32 bpp column drawer on 64-bit builds](F1-sprite-column-oob.md) (`bugs.md` L1) | done |
 | M1 | OPL music (D8, Q5 c): Doom's DMX OPL sound from the IWAD's `GENMIDI`, natively and in the browser | not written |
 | 00 | [Baseline, state hash and code facts](00-baseline.md): native and wasm builds without `-ffast-math`, a per-tic state hash (`-testdump`) compared native against wasm, a hot-join test over UDP, ASan with recovery, [`code-facts.md`](code-facts.md) | done |
-| 01 | [vnet transport (native)](01-vnet-transport.md): `i_vnet.c` fills the driver table; `-relay HOST:PORT` with `-server`/`-connect CODE`; three native players and a join in progress through a local relay, with impairment | in review; AC4 narrowed to latency only by the user (26 Nov 2026), the rest moves to F4 |
+| 01 | [vnet transport (native)](01-vnet-transport.md): `i_vnet.c` fills the driver table; `-relay HOST:PORT` with `-server`/`-connect CODE`; three native players and a join in progress through a local relay, with impairment | done, 26 Nov 2026 (AC4 narrowed to latency only by the user; the full impairment is F4) |
 | F2 | Portable savegame between x86_64 and wasm32 (`bugs.md` L19, L30) | queued, after 01 |
 | F3 | Bots and joining a game in progress (`bugs.md` L23, L24) | queued, after F2 |
 | F4 | Joining a game in progress over a lossy or reordering link (`bugs.md` L31, L35): `PT_STATE` sequence number, the cause of L35, brief 01's AC4 at its full values | queued, before 04 |
