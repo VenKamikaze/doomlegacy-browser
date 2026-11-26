@@ -27,7 +27,7 @@
 # every packet of the room, the joins and the tic exchange crosses the relay. A dedicated
 # server ignores SIGTERM (upstream), so the test stops it with SIGKILL.
 # Every process writes a -testdump file. The impaired case sets VNET_IMPAIR on every
-# process (lat=30,jit=10,loss=3,dup=2,reorder=3 by default), each with a seed of its own
+# process (lat=30 by default; see the default below), each with a seed of its own
 # (the run number and the player), so latency, jitter, loss, duplication and reordering
 # hit every datagram any process sends; the game's own acks and resends must cope.
 #
@@ -52,7 +52,11 @@ do_clean=1
 do_impair=1
 dedicated=0
 state_args=()
-impair="lat=30,jit=10,loss=3,dup=2,reorder=3"
+# Latency only: the user narrowed AC4 to this on 26 Nov 2026. With loss, duplication or
+# reordering the join in progress diverges, over plain UDP too (bugs.md L31, L35); F4
+# fixes that and puts the full spec back as the default:
+#   --impair lat=30,jit=10,loss=3,dup=2,reorder=3
+impair="lat=30"
 join_after=10
 play=30
 while [ $# -gt 0 ]; do
@@ -230,6 +234,12 @@ PY
             reo=$((reo + $(printf '%s' "$line" | sed -n 's/.*reordered \([0-9]*\).*/\1/p' | sed 's/^$/0/')))
         done
         echo "  impairment applied ($impair): $lost lost, $dup duplicated, $reo reordered (all processes together)"
+        # every process must have handed the spec to vnet (the only sign a latency-only spec leaves)
+        local named=0
+        for f in "$sdir/out.txt" "$adir/out.txt" "$bdir/out.txt"; do
+            grep -qF "impairment $impair,seed=" "$f" && named=$((named + 1))
+        done
+        t_check "every process started with the impairment ($named of 3)" test "$named" -eq 3
         # every kind the spec names must show in the counters
         [[ "$impair" == *loss=* ]] && t_check "impairment was applied: datagrams were lost ($lost)" test "$lost" -gt 0
         [[ "$impair" == *dup=* ]] && t_check "impairment was applied: datagrams were duplicated ($dup)" test "$dup" -gt 0
