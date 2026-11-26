@@ -85,6 +85,17 @@ boolean P_Savegame_Read_header( savegame_info_t * infop, byte read_netgame );
 void    P_Savegame_Save_game (void);
 boolean P_Savegame_Load_game (void);
 
+// Test-only (test_dump.c, -testsizes): calls report once for each sector
+// effect with the number of bytes one record of it takes in a savegame, and
+// whether a record survives writing, reading and writing again.
+#define SG_EFFECT_SIZES
+void P_Savegame_Effect_Sizes( void (*report)( const char * name, int bytes, int roundtrip_ok ) );
+
+// True when the savegame being read has the portable layout of the sector
+// effects (see p_saveg.c).
+extern boolean sg_portable;
+extern int sg_version;
+
 extern byte*		savebuffer;
 extern byte*            save_p; 
 extern size_t		savebuffer_size;

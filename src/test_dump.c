@@ -7,6 +7,24 @@
 //                         state as text (one line per object), for game tics
 //                         FROM..TO (TO defaults to FROM)
 //
+// Test hooks for the savegame (brief F2), each independent of -testdump:
+//   -testsave TIC FILE [game]
+//                         at game tic TIC, right after its record, write the
+//                         savegame the join sends (P_Savegame_Write_header with
+//                         the netgame header, P_Savegame_Save_game) to FILE.
+//                         "game": the header of a savegame file instead.
+//                         May be given several times.
+//   -testquit TIC         quit (status 0) at game tic TIC, after the above
+//   -testload FILE        at the first tic, load FILE as a joining client does
+//                         (P_Savegame_Read_header, P_Savegame_Load_game), in a
+//                         single-player game, and play on with no input as fast
+//                         as possible and with no drawing.  The first record
+//                         after it is the state as loaded.
+//   -testcensus           print how many thinkers of each kind the level has,
+//                         each time one of the counts reaches a new maximum
+//   -testsizes            print the bytes one record of each sector effect takes
+//                         in a savegame, and quit
+//
 // Record (seven 32-bit little endian words):
 //   tic, total, random, players, mobjs, world, specials
 // "tic" is gametic after the tic has run.  The five hashes are 32-bit FNV-1a
@@ -17,7 +35,7 @@
 // Taken in TryRunTics (d_clisrv.c) right after G_Ticker and ExtraDataTicker,
 // on every node, whatever drew or did not draw.  Nothing reads the drawing
 // state and nothing here writes game state.  Nothing is sent on the wire, and
-// without -testdump TestDump_Tic is one test of a flag.
+// without -testdump and the savegame hooks TestDump_Tic is a few tests of flags.
 //
 // Never hashed: pointers (objects are numbered by their place in the thinker
 // list), the screen, sound, the menu, M_Random (music, status bar), A_Random
@@ -37,6 +55,15 @@
 #include "d_think.h"
 #include "doomdata.h"
 #include "test_dump.h"
+#include "p_saveg.h"
+#include "d_main.h"
+#include "d_clisrv.h"
+#include "r_main.h"
+#include "r_draw.h"
+#include "console.h"
+#include "hu_stuff.h"
+#include "am_map.h"
+#include "i_system.h"
 
 int  testdump_active = 0;
 
@@ -513,8 +540,8 @@ static uint32_t hash_world( void )
         F( ceilx, s->ceiling_xoffs );  F( ceily, s->ceiling_yoffs );
         F( stairlock, s->stairlock );
         F( prevsec, s->prevsec );  F( nextsec, s->nextsec );
-        // soundtarget: read by A_Look, set by P_RecursiveSound. A savegame does
-        // not hold it (bugs.md L30), so a joined client has it NULL.
+        // soundtarget: read by A_Look, set by P_RecursiveSound. A savegame holds
+        // it since F2 (bugs.md L30).
         F( soundtarget, ord_of( s->soundtarget ) );
         line_end();
     }
@@ -548,13 +575,219 @@ static void put_u32( byte * b, uint32_t v )
     b[2] = (v >> 16) & 0xFF;  b[3] = (v >> 24) & 0xFF;
 }
 
-void TestDump_Tic( void )
+// ---- savegame hooks ----
+
+#ifdef SG_EFFECT_SIZES
+#define SG_LAYOUT()  (sg_portable ? ", portable" : "")
+#else
+// A build from before the portable layout, with this file copied in.
+extern int sg_version;
+#define SG_LAYOUT()  ""
+#endif
+
+#define MAX_TESTSAVE  64
+static struct { tic_t tic; const char * file; int game_header; } testsave[MAX_TESTSAVE];
+static int  num_testsave = 0;
+static tic_t  testquit_tic = 0;
+static const char *  testload_file = NULL;
+static int  options_read = 0;
+static int  census_on = 0;
+
+static void read_options( void )
+{
+    int i;
+
+    options_read = 1;
+    for( i = 1; i + 2 < myargc && num_testsave < MAX_TESTSAVE; i++ )
+    {
+        if( strcmp( myargv[i], "-testsave" ) != 0 )  continue;
+        testsave[num_testsave].tic = (tic_t) atoi( myargv[i + 1] );
+        testsave[num_testsave].file = myargv[i + 2];
+        testsave[num_testsave].game_header =
+            ( i + 3 < myargc && strcmp( myargv[i + 3], "game" ) == 0 );
+        num_testsave++;
+    }
+    i = M_CheckParm( "-testquit" );
+    if( i && M_IsNextParm() )  testquit_tic = (tic_t) atoi( M_GetNextParm() );
+    i = M_CheckParm( "-testload" );
+    if( i && M_IsNextParm() )  testload_file = M_GetNextParm();
+    census_on = M_CheckParm( "-testcensus" );
+}
+
+// What the level holds that a savegame has records for: the number of each
+// kind of thinker, and of sectors with a soundtarget.  Printed when a savegame
+// is written and when it is loaded, to show what a save holds.
+#define CENSUS_KINDS  18
+static const char * const census_name[CENSUS_KINDS] =
+{
+    "mobj", "ceiling", "stopped-ceiling", "door", "floor", "plat", "stopped-plat",
+    "flash", "strobe", "glow", "fireflicker", "lightfade", "elevator",
+    "scroll", "friction", "pusher", "soundtarget", "thinker-total"
+};
+
+static void take_census( int * c )
+{
+    const thinker_t * th;
+    uint32_t i;
+
+    memset( c, 0, CENSUS_KINDS * sizeof(int) );
+    for( th = thinkercap.next; th != &thinkercap; th = th->next )
+    {
+        c[17]++;
+        switch( th->function )
+        {
+         case TFI_MobjThinker:    c[0]++;  break;
+         case TFI_MoveCeiling:    c[1]++;  break;
+         case TFI_VerticalDoor:   c[3]++;  break;
+         case TFI_MoveFloor:      c[4]++;  break;
+         case TFI_PlatRaise:      c[5]++;  break;
+         case TFI_LightFlash:     c[7]++;  break;
+         case TFI_StrobeFlash:    c[8]++;  break;
+         case TFI_Glow:           c[9]++;  break;
+         case TFI_FireFlicker:    c[10]++;  break;
+         case TFI_LightFade:      c[11]++;  break;
+         case TFI_MoveElevator:   c[12]++;  break;
+         case TFI_Scroll:         c[13]++;  break;
+         case TFI_Friction:       c[14]++;  break;
+         case TFI_Pusher:         c[15]++;  break;
+         case TFI_NULL:
+            if( in_active_ceilings( th ) )  c[2]++;
+            else if( in_active_plats( th ) )  c[6]++;
+            break;
+         default:  break;
+        }
+    }
+    for( i = 0; i < numsectors; i++ )
+        if( sectors[i].soundtarget )  c[16]++;
+}
+
+static void print_census( const char * what )
+{
+    int c[CENSUS_KINDS], i;
+
+    take_census( c );
+    printf( "TEST: %s holds:", what );
+    for( i = 0; i < CENSUS_KINDS - 1; i++ )
+        printf( " %s %d", census_name[i], c[i] );
+    printf( "\n" );
+}
+
+// -testcensus: every time a kind of thinker (or a soundtarget) reaches a number
+// it has not had before in this run, print the census.  The last line has the
+// most of each, which says which kinds a run never produces.
+static int  census_max[CENSUS_KINDS];
+
+static void census_tic( void )
+{
+    int c[CENSUS_KINDS], i, grew = 0;
+
+    if( gamestate != GS_LEVEL )  return;
+    take_census( c );
+    for( i = 0; i < CENSUS_KINDS - 1; i++ )
+    {
+        if( c[i] > census_max[i] )  { census_max[i] = c[i];  grew = 1; }
+    }
+    if( grew )
+    {
+        printf( "TEST: census at gametic %u:", (unsigned) gametic );
+        for( i = 0; i < CENSUS_KINDS - 1; i++ )
+            printf( " %s %d", census_name[i], census_max[i] );
+        printf( "\n" );
+        fflush( stdout );
+    }
+}
+
+// What the join sends (SV_Send_SaveGame), written to a file.
+static void write_savegame( const char * name, int game_header )
+{
+    FILE * f;
+    size_t length;
+
+    P_Alloc_savebuffer( 1 );
+    if( ! savebuffer )  I_Error( "-testsave: no memory" );
+    print_census( "save" );
+    if( game_header )
+        P_Savegame_Write_header( "test", 0 );
+    else
+        P_Savegame_Write_header( NULL, 1 );
+    P_Savegame_Save_game();
+    length = P_Savegame_length();
+    if( length >= SAVEBUF_OVERFLOW_LENGTH )  I_Error( "-testsave: buffer overrun" );
+    f = fopen( name, "wb" );
+    if( ! f || fwrite( savebuffer, 1, length, f ) != length || fclose( f ) != 0 )
+        I_Error( "-testsave: cannot write %s", name );
+    free( savebuffer );
+    savebuffer = NULL;
+    printf( "TEST: saved gametic %u (%u bytes) to %s\n", (unsigned) gametic,
+            (unsigned) length, name );
+    fflush( stdout );
+}
+
+// What CL_Load_Received_Savegame and G_DoLoadGame do, in a single-player game.
+static void load_savegame( const char * name )
+{
+    savegame_info_t sginfo;
+    char magic[16];
+    int netgame_header = 0, in_demo;
+    FILE * f = fopen( name, "rb" );
+
+    if( ! f )  I_Error( "-testload: cannot read %s", name );
+    if( fread( magic, 1, sizeof(magic), f ) == sizeof(magic) )
+        netgame_header = ( memcmp( magic, "!!Legacy_netgame", sizeof(magic) ) == 0 );
+    fclose( f );
+
+    // Under -timedemo or -playdemo the game keeps the settings the demo made
+    // (demo version, compatibility switches, changes to mobjinfo) and takes
+    // over from the demo: a savegame taken inside a demo needs them, and
+    // the loaded game then plays on with no input.
+    in_demo = demoplayback;
+    if( ! in_demo )
+    {
+        D_DisableDemo();
+        SV_SpawnServer();
+    }
+    sginfo.msg[0] = 0;
+    if( P_Savegame_Readfile( name ) < 0 )  I_Error( "-testload: cannot read %s", name );
+    if( ! P_Savegame_Read_header( &sginfo, netgame_header ) )
+        I_Error( "-testload: %s", sginfo.msg );
+    if( ! in_demo )  G_setup_VERSION();
+    paused = 0;
+    automapactive = false;
+    playerdeadview = false;
+    P_Savegame_Load_game();
+    if( P_Savegame_Closefile( 0 ) < 0 )  I_Error( "-testload: %s is corrupted", name );
+    gameaction = ga_nothing;
+    gamestate = GS_LEVEL;
+    displayplayer = consoleplayer;
+    displayplayer_ptr = consoleplayer_ptr;
+    multiplayer = playeringame[1];
+    if( setsizeneeded )  R_ExecuteSetViewSize();
+    R_FillBackScreen();
+    CON_ToggleOff();
+    print_census( "load" );
+    // No input, as fast as possible, nothing drawn.
+    demoplayback = false;
+    timingdemo = false;
+    singletics = true;
+    nodrawers = true;
+    printf( "TEST: loaded %s (%s, version %d%s) at gametic %u\n", name,
+            netgame_header ? "netgame header" : "game header", sg_version,
+            SG_LAYOUT(), (unsigned) gametic );
+    fflush( stdout );
+}
+
+#ifdef SG_EFFECT_SIZES
+static void report_size( const char * name, int bytes, int roundtrip_ok )
+{
+    printf( "size %s %d roundtrip %s\n", name, bytes, roundtrip_ok ? "ok" : "FAIL" );
+}
+#endif
+
+static void record_tic( void )
 {
     uint32_t h[5], total;
     byte rec[28];
     int in_level, i;
-
-    if( ! testdump_active )  return;
 
     txt = ( state_file && gametic >= state_from && gametic <= state_to )
           ? state_file : NULL;
@@ -603,10 +836,44 @@ void TestDump_Tic( void )
     fflush( dump_file );
 }
 
+void TestDump_Tic( void )
+{
+    int i;
+
+    if( ! options_read )  read_options();
+    if( testload_file )
+    {
+        const char * name = testload_file;
+        testload_file = NULL;
+        load_savegame( name );
+    }
+
+    if( testdump_active )
+        record_tic();
+    if( census_on )
+        census_tic();
+    for( i = 0; i < num_testsave; i++ )
+    {
+        if( testsave[i].tic == gametic )
+            write_savegame( testsave[i].file, testsave[i].game_header );
+    }
+    if( testquit_tic && gametic >= testquit_tic )
+        I_Quit();
+}
+
 void TestDump_Init( void )
 {
-    int p = M_CheckParm( "-testdump" );
+    int p;
 
+#ifdef SG_EFFECT_SIZES
+    if( M_CheckParm( "-testsizes" ) )
+    {
+        P_Savegame_Effect_Sizes( report_size );
+        fflush( stdout );
+        I_Quit();
+    }
+#endif
+    p = M_CheckParm( "-testdump" );
     if( ! p )  return;
     if( ! M_IsNextParm() )
     {
