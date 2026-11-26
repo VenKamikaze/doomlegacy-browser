@@ -9,6 +9,8 @@
 //   --iwad FILE        IWAD, put into MEMFS as /work/<name>
 //   --demo FILE        a demo file, put into MEMFS as /work/<name> (repeatable; pass its
 //                      bare name to the game)
+//   --put FILE[=NAME]  any file (a savegame), put into MEMFS as /work/<NAME> (default: its
+//                      base name) before the game starts (repeatable)
 //   --get PATH=FILE    after the game exits, copy MEMFS file /work/PATH to FILE (repeatable)
 //   --legacy FILE      legacy.wad (default common/legacy.wad), put into MEMFS as /work/legacy.wad
 //   --wasm DIR         where doomlegacy.js is (default build/wasm/bin)
@@ -27,7 +29,7 @@ const path = require('path');
 const http = require('http');
 const { chromium } = require('playwright');
 
-const opts = { iwad: null, demos: [], gets: [], legacy: path.join(__dirname, '../../common/legacy.wad'), wasm: path.join(__dirname, '../../build/wasm/bin'), timeout: 600 };
+const opts = { iwad: null, demos: [], puts: [], gets: [], legacy: path.join(__dirname, '../../common/legacy.wad'), wasm: path.join(__dirname, '../../build/wasm/bin'), timeout: 600 };
 let game = [];
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
@@ -35,6 +37,7 @@ for (let i = 0; i < argv.length; i++) {
   if (a === '--') { game = argv.slice(i + 1); break; }
   else if (a === '--iwad') opts.iwad = argv[++i];
   else if (a === '--demo') opts.demos.push(argv[++i]);
+  else if (a === '--put') { const [src, name] = argv[++i].split('='); opts.puts.push({ src, name: name || path.basename(src) }); }
   else if (a === '--get') opts.gets.push(argv[++i]);
   else if (a === '--legacy') opts.legacy = argv[++i];
   else if (a === '--wasm') opts.wasm = argv[++i];
@@ -43,7 +46,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 if (!opts.iwad) { console.error('--iwad is required'); process.exit(2); }
 
-const dataFiles = [opts.iwad, opts.legacy, ...opts.demos];
+const dataFiles = [opts.iwad, opts.legacy, ...opts.demos].map((f) => ({ src: f, name: path.basename(f) })).concat(opts.puts);
 const page_html = `<!doctype html><meta charset=utf-8><title>doomlegacy test</title>
 <canvas id=canvas width=320 height=200></canvas>
 <script src="/doomlegacy.js"></script>`;
@@ -52,7 +55,7 @@ const server = http.createServer((req, res) => {
   const u = decodeURIComponent(req.url.split('?')[0]);
   if (u === '/') { res.setHeader('content-type', 'text/html'); res.end(page_html); return; }
   let file = null;
-  if (u.startsWith('/data/')) file = dataFiles.find((f) => path.basename(f) === u.slice(6));
+  if (u.startsWith('/data/')) { const d = dataFiles.find((f) => f.name === u.slice(6)); if (d) file = d.src; }
   else if (u === '/doomlegacy.js' || u === '/doomlegacy.wasm') file = path.resolve(opts.wasm, u.slice(1));
   if (!file) { res.statusCode = 404; res.end(); return; }
   res.setHeader('content-type', u.endsWith('.wasm') ? 'application/wasm' : u.endsWith('.js') ? 'text/javascript' : 'application/octet-stream');
@@ -71,7 +74,7 @@ async function main() {
     page.on('crash', () => { process.stdout.write('run-wasm: the page crashed\n'); });
     await page.goto(`http://127.0.0.1:${port}/`);
     const job = {
-      files: dataFiles.map((f) => path.basename(f)),
+      files: dataFiles.map((f) => f.name),
       iwad: path.basename(opts.iwad), gets: opts.gets.map((g) => g.split('=')[0]), game,
     };
     const run = page.evaluate(async (job) => {

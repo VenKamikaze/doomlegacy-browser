@@ -27,15 +27,15 @@ ubsan p_mobj.c:3483:41 left shift of negative value N L10
 ubsan p_pspr.c:1037:46 left shift of negative value N L10
 ubsan p_pspr.c:848:57 left shift of negative value N L10
 ubsan p_pspr.c:878:59 left shift of negative value N L10
-ubsan p_saveg.c:1060:69 left shift of negative value N L10
-ubsan p_saveg.c:1077:69 left shift of negative value N L10
-ubsan p_saveg.c:1937:53 left shift of negative value N L10
-ubsan p_saveg.c:1938:56 left shift of negative value N L10
-ubsan p_saveg.c:2467:51 left shift of negative value N L10
-ubsan p_saveg.c:2468:51 left shift of negative value N L10
-ubsan p_saveg.c:3731:37 left shift of N by N places cannot be represented in type 'int' L10
-ubsan p_saveg.c:957:59 left shift of negative value N L10
-ubsan p_saveg.c:959:63 left shift of negative value N L10
+ubsan p_saveg.c:1083:69 left shift of negative value N L10
+ubsan p_saveg.c:1100:69 left shift of negative value N L10
+ubsan p_saveg.c:2389:53 left shift of negative value N L10
+ubsan p_saveg.c:2390:56 left shift of negative value N L10
+ubsan p_saveg.c:2848:51 left shift of negative value N L10
+ubsan p_saveg.c:2849:51 left shift of negative value N L10
+ubsan p_saveg.c:4287:37 left shift of N by N places cannot be represented in type 'int' L10
+ubsan p_saveg.c:980:59 left shift of negative value N L10
+ubsan p_saveg.c:982:63 left shift of negative value N L10
 ubsan p_setup.c:1227:56 left shift of negative value N L10
 ubsan p_setup.c:1228:48 left shift of negative value N L10
 ubsan p_setup.c:367:33 left shift of negative value N L10
