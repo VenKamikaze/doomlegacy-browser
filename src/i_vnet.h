@@ -16,8 +16,15 @@
 //   10.0.0.1), joiners connect to "room-host".
 //
 //   Lifetime of the context (what a lobby needs to know):
-//     - I_VNet_Configure() selects the driver, the relay and the room to
-//       join (or none, to create one).  The -relay option calls it.
+//     - I_VNet_Configure() only records the relay and the room to join (or
+//       none, to create one).  It does not install the driver: that is done
+//       by I_Init_VNet_Network() at start-up, when -relay is on the command
+//       line (it sets I_NetOpenSocket; D_Startup_NetGame limits the packet
+//       length).  A game started without -relay stays on the UDP driver at
+//       1450 bytes whatever I_VNet_Configure() is told; a lobby needs more
+//       (brief 05: see doco/browser/code-facts.md, section 13).  It also
+//       refuses URLs and resolves the host name, which the browser build
+//       cannot (brief 04).
 //     - The game opens the driver with I_NetOpenSocket() (a server when it
 //       starts the game, a client at "connect"): that creates the vnet
 //       context.  It does not block: the context connects and enters the
@@ -52,7 +59,9 @@ typedef enum {
 // the option is then refused with a message.)
 boolean  I_VNet_Requested(void);
 
-// Select vnet as the network driver.
+// Record the relay and the room: with -relay on the command line this is
+// all that selects vnet (see the header comment for what a later call does
+// not do).
 //   relay : the relay's UDP address "HOST:PORT" (a host name is resolved here,
 //           once, and may block for the length of a DNS lookup)
 //   room  : the room code to join, or NULL or "" to create a room

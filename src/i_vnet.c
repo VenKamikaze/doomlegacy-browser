@@ -34,6 +34,7 @@
 #include "d_net.h"
 #include "d_clisrv.h"
 #include "d_netcmd.h"
+#include "d_netfil.h"
 #include "m_argv.h"
 #include "command.h"
 #include "doomstat.h"
@@ -134,6 +135,7 @@ static int       pending_count = 0;
 static unsigned  max_send_len = 0;
 static byte      max_send_type = 0;
 static boolean   reported_oversize = false;
+static boolean   reported_pending_full = false;
 
 
 // ---------------------------------------------------------------------------
@@ -173,7 +175,11 @@ static void vn_fatal_arg(const char * fmt, ...)
 static void vn_log(void * user, int level, const char * msg)
 {
     (void) user;
-    if( level <= VNET_LOG_ERROR )
+    // Errors, and the one information line that shows vnet itself took the
+    // impairment from VNET_IMPAIR (tests/net/test-relay.sh looks for it: the
+    // game's own echo of getenv proves nothing about vnet).
+    if( level <= VNET_LOG_ERROR
+        || ( level == VNET_LOG_INFO && strncmp(msg, "impairment from ", 16) == 0 ) )
     {
         printf("vnet: %s\n", msg);
         fflush(stdout);
@@ -364,9 +370,25 @@ static void vn_shutdown(void)
 static void vn_end_game(void)
 {
     int n;
+    boolean was_netgame = netgame;
 
     if( ending )  return;
     ending = true;
+
+    if( was_netgame )
+    {
+        // Nothing can be acknowledged any more.  Close the game's connections
+        // now, before anything is sent: D_Quit_NetGame (reached from
+        // "exitgame" and from I_Error) sends a reliable PT_CLIENTQUIT or
+        // PT_SERVERSHUTDOWN, which HSendPacket saves for an ack before
+        // I_NetSend fails, and D_CloseConnection then waits 5 s for it.
+        // With the connections closed, and netgame false, that send never
+        // happens and nothing waits.  This also closes the driver.
+        Close_NetFile();
+        for( n=1; n<MAXNETNODES; n++ )
+            Net_CloseConnection(n, 1);
+        D_CloseConnection();
+    }
 
     if( dedicated )
     {
@@ -376,14 +398,11 @@ static void vn_end_game(void)
         I_Error("vnet: %s", error_text);   // does not return
     }
 
-    if( netgame )
+    if( was_netgame )
     {
         vn_say("vnet: ending the network game");
-        // Nothing can be acknowledged any more: do not wait for acks at the exit.
-        for( n=1; n<MAXNETNODES; n++ )
-            Net_CloseConnection(n, 1);
-        // The game's own way out: "exitgame" (D_Quit_NetGame, CL_Reset, D_StartTitle).
-        // This closes the driver, which destroys the context.
+        // The rest of the game's way out: "exitgame" (CL_Reset, D_StartTitle;
+        // its D_Quit_NetGame has nothing left to do).
         Command_ExitGame_f();
     }
     else
@@ -555,6 +574,12 @@ static byte vn_send(void)
         }
         if( pending_count == PENDING_MAX )
         {
+            if( ! reported_pending_full )
+            {
+                reported_pending_full = true;
+                vn_say("vnet: %d datagrams are waiting for the room: the oldest is dropped (the game resends)",
+                       PENDING_MAX);
+            }
             memmove(&pending[0], &pending[1], sizeof(pending[0]) * (PENDING_MAX - 1));
             pending_count--;
         }
@@ -696,6 +721,8 @@ static boolean open_socket(void)
         return true;              // already open
     vn_discard_context();
     vn_reset_nodes();
+    ending = false;           // never stale: a failure of this context must end this game
+    end_pending = false;
 
     if( ! relay_numeric[0] )
     {
@@ -740,10 +767,9 @@ static boolean open_socket(void)
 
     state = IVN_CONNECTING;
     was_ready = false;
-    ending = false;
-    end_pending = false;
     host_heard = false;
     reported_oversize = false;
+    reported_pending_full = false;
     error_code = 0;
     error_text[0] = '\0';
     open_time = vnet_time(ctx);

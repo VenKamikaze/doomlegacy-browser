@@ -26,6 +26,7 @@
 #   room-full         the relay's member limit (-max-members 2): a third member is refused
 #   game-full         the game's own limit (sv_maxplayers 1): the joiner is refused by the server
 #   relay-dies        the relay is killed during a game: both players leave it
+#   relay-dies-dedicated  the same with a -dedicated server (it exits, status 255)
 #   relay-drops       the relay drops a silent member (-session-timeout) and says so
 #   host-lost         the host is killed during a game: the client's node times out ("Server Timeout"),
 #                     the game goes to the title screen and the driver closes, as over UDP
@@ -183,8 +184,28 @@ relay_dies_case() {
     t_check "the host says the relay session ended and leaves the network game" \
         has "$sd" 'vnet: the relay session ended: .*relay went silent'
     t_check "the player says the same" has "$ad" 'vnet: the relay session ended: .*relay went silent'
-    t_check "both keep running at the title screen, within 10 s of the relay's death ($took s)" \
-        bash -c 'grep -q "vnet: ending the network game" "$1/out.txt" "$2/out.txt" && kill -0 "$3" && kill -0 "$4" && [ "$5" -le 10 ]' _ "$sd" "$ad" "$sp" "$ap" "$took"
+    t_check "both keep running at the title screen, within 6 s of the relay's death ($took s)" \
+        bash -c 'grep -q "vnet: ending the network game" "$1/out.txt" "$2/out.txt" && kill -0 "$3" && kill -0 "$4" && [ "$5" -le 6 ]' _ "$sd" "$ad" "$sp" "$ap" "$took"
+}
+
+relay_dies_dedicated_case() {
+    t_note "relay-dies-dedicated: the relay is killed while a -dedicated server has a player"
+    t_start_relay -keepalive 1s; local R="127.0.0.1:$relay_port" rp=$relay_pid
+    started_room rdd-server "$R" -dedicated -server 2 || return
+    local sp=$srv_pid sd="$srv_dir"
+    t_game rdd-a -relay "$R" -connect "$code" -testdump "$t_tmp/rdd-a/a.bin"; local ap=$game_pid ad="$game_dir"
+    t_wait_for "$ad/out.txt" 'vnet: joined room' 15
+    sleep 8
+    local t0=$SECONDS
+    kill -KILL "$rp"; wait "$rp" 2>/dev/null
+    wait_msg "$sd" 'vnet: closed' 20; local took=$((SECONDS - t0))
+    t_wait_pid "$sp" 20; local st=$t_status
+    # (I_Error itself sleeps 3 s before it exits, upstream: the bound is on the driver closing)
+    t_check "the dedicated server says the relay session ended, closes the driver within 6 s of the relay's death ($took s) and exits with status 255 (got $st)" \
+        bash -c '[ "$1" = 255 ] && grep -q "vnet: the relay session ended: .*relay went silent" "$2/out.txt" && grep -q "a dedicated server cannot run without its room" "$2/out.txt" && [ "$3" -le 6 ]' _ "$st" "$sd" "$took"
+    wait_msg "$ad" 'vnet: closed' 10
+    t_check "its player leaves the network game too and keeps running" \
+        bash -c 'grep -q "vnet: closed" "$1/out.txt" && kill -0 "$2"' _ "$ad" "$ap"
 }
 
 relay_drops_case() {
@@ -200,8 +221,8 @@ relay_drops_case() {
     wait_msg "$ad" 'vnet: closed' 15; local took=$((SECONDS - t0))
     t_check "after it runs again the player is told the relay ended its session" \
         has "$ad" 'vnet: the relay session ended: session closed by the relay'
-    t_check "and leaves the network game and keeps running, within 5 s ($took s)" \
-        bash -c 'grep -q "vnet: closed" "$1/out.txt" && kill -0 "$2" && [ "$3" -le 5 ]' _ "$ad" "$ap" "$took"
+    t_check "and leaves the network game and keeps running, within 2 s ($took s)" \
+        bash -c 'grep -q "vnet: closed" "$1/out.txt" && kill -0 "$2" && [ "$3" -le 2 ]' _ "$ad" "$ap" "$took"
 }
 
 host_lost_case() {
@@ -239,7 +260,7 @@ host_silent_case() {
 
 # ---------------------------------------------------------------------------
 
-cases="args relay-unreachable no-such-room room-full game-full relay-dies relay-drops host-lost host-silent"
+cases="args relay-unreachable no-such-room room-full game-full relay-dies relay-dies-dedicated relay-drops host-lost host-silent"
 if [ "$list" = 1 ]; then echo $cases | tr ' ' '\n'; exit 0; fi
 want args && { t_note "bad arguments"; arg_cases; }
 want relay-unreachable && unreachable_case
@@ -247,6 +268,7 @@ want no-such-room && no_such_room_case
 want room-full && room_full_case
 want game-full && game_full_case
 want relay-dies && relay_dies_case
+want relay-dies-dedicated && relay_dies_dedicated_case
 want relay-drops && relay_drops_case
 want host-lost && host_lost_case
 want host-silent && host_silent_case

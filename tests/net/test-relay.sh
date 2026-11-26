@@ -159,7 +159,7 @@ run_case() {
     t_check "all three logged the same room code $code" \
         test "$(grep -l "vnet: \(room code\|joined room\) $code " "$sdir/out.txt" "$adir/out.txt" "$bdir/out.txt" | wc -l)" -eq 3
     if [ "$dedicated" = 0 ]; then
-    local bfirst; bfirst="$(python3 -I "$diff_tool" --info "$bdir/b.bin" 2>/dev/null | sed -n 's/[^0-9]*\([0-9][0-9]*\)\.\..*/\1/p' | head -1)"
+    local bfirst; bfirst="$(python3 -I "$diff_tool" --info "$bdir/b.bin" 2>/dev/null | sed -n 's/.*tics \([0-9][0-9]*\)\.\..*/\1/p' | head -1)"
     t_check "B joined in progress (its first record, tic ${bfirst:-none}, is after tic 100)" test "${bfirst:-0}" -gt 100
     fi
     t_check "B has at least $play s of game time after the join ($bn >= $bneed)" test "$bn" -ge "$bneed"
@@ -234,12 +234,14 @@ PY
             reo=$((reo + $(printf '%s' "$line" | sed -n 's/.*reordered \([0-9]*\).*/\1/p' | sed 's/^$/0/')))
         done
         echo "  impairment applied ($impair): $lost lost, $dup duplicated, $reo reordered (all processes together)"
-        # every process must have handed the spec to vnet (the only sign a latency-only spec leaves)
+        # vnet itself must have taken the spec from VNET_IMPAIR on every process: it says so
+        # in its own log line (i_vnet.c passes it on), the only sign a latency-only spec
+        # leaves (the game's own echo of getenv would not show an ignored variable)
         local named=0
         for f in "$sdir/out.txt" "$adir/out.txt" "$bdir/out.txt"; do
-            grep -qF "impairment $impair,seed=" "$f" && named=$((named + 1))
+            grep -qF "vnet: impairment from VNET_IMPAIR=\"$impair,seed=" "$f" && named=$((named + 1))
         done
-        t_check "every process started with the impairment ($named of 3)" test "$named" -eq 3
+        t_check "vnet took the impairment from VNET_IMPAIR on every process ($named of 3)" test "$named" -eq 3
         # every kind the spec names must show in the counters
         [[ "$impair" == *loss=* ]] && t_check "impairment was applied: datagrams were lost ($lost)" test "$lost" -gt 0
         [[ "$impair" == *dup=* ]] && t_check "impairment was applied: datagrams were duplicated ($dup)" test "$dup" -gt 0
