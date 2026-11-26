@@ -74,7 +74,7 @@ typedef struct {
    char * map;  // level MAP01, E1M2, etc.
    char * levtime; // time into this level, as string
    boolean  have_game, have_wad;  // validity checks on read
-   char   msg[60];  // currently uses 46 chars max
+   char   msg[100];  // currently uses 90 chars max
 } savegame_info_t;
 
 // Read savegame header from savegame buffer.

@@ -10,7 +10,7 @@
 //   --demo FILE        a demo file, put into MEMFS as /work/<name> (repeatable; pass its
 //                      bare name to the game)
 //   --put FILE[=NAME]  any file (a savegame), put into MEMFS as /work/<NAME> (default: its
-//                      base name) before the game starts (repeatable)
+//                      base name; split at the last '=', so NAME has none) before the game starts (repeatable)
 //   --get PATH=FILE    after the game exits, copy MEMFS file /work/PATH to FILE (repeatable)
 //   --legacy FILE      legacy.wad (default common/legacy.wad), put into MEMFS as /work/legacy.wad
 //   --wasm DIR         where doomlegacy.js is (default build/wasm/bin)
@@ -37,7 +37,7 @@ for (let i = 0; i < argv.length; i++) {
   if (a === '--') { game = argv.slice(i + 1); break; }
   else if (a === '--iwad') opts.iwad = argv[++i];
   else if (a === '--demo') opts.demos.push(argv[++i]);
-  else if (a === '--put') { const [src, name] = argv[++i].split('='); opts.puts.push({ src, name: name || path.basename(src) }); }
+  else if (a === '--put') { const v = argv[++i], e = v.lastIndexOf('='); opts.puts.push(e > 0 ? { src: v.slice(0, e), name: v.slice(e + 1) } : { src: v, name: path.basename(v) }); }
   else if (a === '--get') opts.gets.push(argv[++i]);
   else if (a === '--legacy') opts.legacy = argv[++i];
   else if (a === '--wasm') opts.wasm = argv[++i];

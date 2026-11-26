@@ -14,7 +14,8 @@
 # Needs scripts/build-native.sh, scripts/build-wasm.sh, scripts/fetch-test-data.sh.
 #
 # AC1 (sizes): `-testsizes` on both builds prints the bytes one record of each sector
-#   effect takes in a savegame; the two outputs must be identical.
+#   effect takes in a savegame; there must be 13 lines, none with `roundtrip FAIL` (every saved
+#   field comes back as it was written), the sizes must be the table's, and the two outputs identical.
 # AC2 (same bytes): for each case, a demo is played with -timedemo -nodraw on native and
 #   on wasm, and the game writes the savegame the join sends (-testsave TIC FILE) at the
 #   listed tics; the two files of a tic must be byte-identical. (-nodraw: the renderer
@@ -136,10 +137,26 @@ run_wasm "$work/sizes-wasm" "$iw1" -- -testsizes
 grep '^size ' "$work/sizes-native/out.txt" > "$work/sizes-native.txt"
 grep '^size ' "$work/sizes-wasm/out.txt" > "$work/sizes-wasm.txt"
 echo "== AC1: bytes one record of each sector effect takes in a savegame"
-if [ ! -s "$work/sizes-native.txt" ]; then
-    bad "native printed no sizes (exit $(cat "$work/sizes-native/exit"))"
-elif cmp -s "$work/sizes-native.txt" "$work/sizes-wasm.txt"; then
-    ok "native and wasm print the same $(wc -l < "$work/sizes-native.txt") sizes: $(sed 's/^size //; s/ /=/' "$work/sizes-native.txt" | tr '\n' ' ')"
+# What one record takes (docs: code-facts.md section 8). A change of the layout changes this
+# table with it; a change on both builds that the table does not know fails AC1.
+expected_sizes="ceiling 37 door 35 floor 27 plat 41 flash 21 strobe 21 glow 10 fireflicker 13 lightfade 9 elevator 22 scroll 37 friction 13 pusher 33"
+for w in native wasm; do
+    f="$work/sizes-$w.txt"
+    if [ ! -s "$f" ]; then
+        bad "$w printed no sizes (exit $(cat "$work/sizes-$w/exit"))"; continue
+    fi
+    [ "$(wc -l < "$f")" = 13 ] && ok "$w printed 13 size lines" || bad "$w printed $(wc -l < "$f") size lines, not 13"
+    if grep -q 'roundtrip FAIL' "$f"; then
+        bad "$w: a record does not survive write, read and write: $(grep 'roundtrip FAIL' "$f" | sed 's/^size //; s/ roundtrip FAIL//' | tr '\n' ' ')"
+    else
+        ok "$w: every record survives write, read and write, field by field"
+    fi
+    got="$(awk '{printf "%s%s %s", (NR>1?" ":""), $2, $3}' "$f")"
+    [ "$got" = "$expected_sizes" ] && ok "$w: the sizes are the expected ones" \
+        || bad "$w: the sizes are not the expected ones: [$got] against [$expected_sizes]"
+done
+if cmp -s "$work/sizes-native.txt" "$work/sizes-wasm.txt"; then
+    ok "native and wasm print the same sizes: $(awk '{printf "%s=%s ", $2, $3}' "$work/sizes-native.txt")"
 else
     bad "native and wasm print different sizes (native < > wasm):"
     diff "$work/sizes-native.txt" "$work/sizes-wasm.txt" | sed 's/^/        /'

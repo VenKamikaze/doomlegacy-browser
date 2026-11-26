@@ -30,7 +30,7 @@
 #   old layout when it is sent by a server (the netgame header, what a join sends): it says so
 #   and loads nothing.
 # Join. An old server and a new client, and a new server and an old client, over UDP on
-#   loopback: the client must say why it cannot join ("the server is an older build" or "wrong
+#   loopback: the client must say why it cannot join ("not the portable layout" or "wrong
 #   version") and must not start the game.
 #
 # Exit status: 0 if everything passed, 1 if not, 2 on bad set-up.
@@ -115,19 +115,29 @@ echo "   old save: $(stat -c %s "$work/o-save/net.sav") bytes; new save: $(stat 
 echo "== AC4: the state as loaded against the state when saved (tic $tic)"
 run "$old" "$work/o-load" -- -timedemo "$demo.lmp" -nodraw -testload "$work/o-save/net.sav" -testdump L.bin -teststate 1 -testquit 4
 run "$native" "$work/n-load" -- -timedemo "$demo.lmp" -nodraw -testload "$work/n-save/net.sav" -testdump L.bin -teststate 1 -testquit 4
+# sectors with a soundtarget: as the game counted them, and as the state file has them
+nsnd="$(grep '^TEST: save holds' "$work/o-save/out.txt" | head -1 | sed 's/.*soundtarget \([0-9]*\).*/\1/')"
+ssnd="$(grep -c ' soundtarget=[0-9]' "$work/o-save/o.bin.state")"
+python3 -I "$root/tests/tools/state-diff.py" "$work/o-save/o.bin.state" "$work/o-load/L.bin.state" 2000 > "$work/o-diff.txt"
+osnd="$(grep -c 'soundtarget' "$work/o-diff.txt")"
 if info="$(python3 -I "$root/tests/tools/dump-at.py" "$work/o-save/o.bin" "$tic" "$work/o-load/L.bin" first)"; then
     bad "old build: the state as loaded equals the state when saved (it does not on the build from before F2): $info"
 else
-    ok "old build: the state as loaded differs from the state when saved, as before this chunk: $info"
-    python3 -I "$root/tests/tools/state-diff.py" "$work/o-save/o.bin.state" "$work/o-load/L.bin.state" 2000 > "$work/o-diff.txt"
     echo "        state lines that differ (saved -> loaded), the sectors' soundtarget first:"
     { grep 'soundtarget' "$work/o-diff.txt" | head -4; grep -v 'soundtarget' "$work/o-diff.txt" | head -4; } | cut -c1-200 | sed 's/^/          /'
-    echo "        $(grep -c 'soundtarget' "$work/o-diff.txt") sector lines differ in soundtarget, $(grep -vc 'soundtarget' "$work/o-diff.txt") lines in other fields"
+    echo "        $osnd sector lines differ in soundtarget, $(grep -vc 'soundtarget' "$work/o-diff.txt") lines in other fields; the saver had $nsnd sectors with a soundtarget"
+    if [ "${nsnd:-0}" -gt 0 ] && [ "$osnd" = "$nsnd" ] && [ "$ssnd" = "$nsnd" ]; then
+        ok "old build: the state as loaded differs from the state when saved in the soundtarget of every sector that had one ($osnd of $nsnd), as before this chunk: $info"
+    else
+        bad "old build: the difference is not the soundtarget (differing soundtarget lines $osnd, sectors with one at the save $nsnd, in its state file $ssnd): $info"
+    fi
 fi
-if info="$(python3 -I "$root/tests/tools/dump-at.py" "$work/n-save/o.bin" "$tic" "$work/n-load/L.bin" first)"; then
-    ok "new build: the state as loaded equals the state when saved: $info"
+python3 -I "$root/tests/tools/state-diff.py" "$work/n-save/o.bin.state" "$work/n-load/L.bin.state" 2000 > "$work/n-diff.txt"
+if info="$(python3 -I "$root/tests/tools/dump-at.py" "$work/n-save/o.bin" "$tic" "$work/n-load/L.bin" first)" \
+   && [ "$(grep -c ' soundtarget=[0-9]' "$work/n-load/L.bin.state")" = "$nsnd" ] && [ "$nsnd" -gt 0 ]; then
+    ok "new build: the state as loaded equals the state when saved, with the same $nsnd sectors that have a soundtarget: $info"
 else
-    bad "new build: the state as loaded differs from the state when saved: $info"
+    bad "new build: the state as loaded differs from the state when saved, or its soundtargets are not the saver's ($nsnd): $info"
 fi
 
 # ---- AC5: the old layout, loaded by the new build ----
@@ -172,7 +182,7 @@ else
 fi
 # A server's savegame of the old layout (the netgame header) is refused by the new build.
 run "$native" "$work/n-refuse" -- -timedemo "$demo.lmp" -nodraw -testload "$work/o-save/net.sav" -testquit 4
-if [ "$(cat "$work/n-refuse/exit")" != 0 ] && grep -q 'the server is an older build' "$work/n-refuse/out.txt"; then
+if [ "$(cat "$work/n-refuse/exit")" != 0 ] && grep -q 'not the portable layout' "$work/n-refuse/out.txt"; then
     ok "the new build refuses the old layout when it is a server's: $(grep -o 'Invalid savegame[^\\]*' "$work/n-refuse/out.txt" | head -1)"
 else
     bad "the new build did not refuse the server's savegame of the old layout: $(tail -2 "$work/n-refuse/out.txt" | tr '\n' '|')"
@@ -206,7 +216,7 @@ joinpair() {   # joinpair NAME SERVER_BIN CLIENT_BIN
 if [ "$join" = 1 ]; then
     echo "== a join between the old build and the new build, over UDP on loopback"
     joinpair old-server "$old" "$native"
-    if grep -q 'the server is an older build' "$work/old-server/c/out.txt"; then
+    if grep -q 'not the portable layout' "$work/old-server/c/out.txt"; then
         ok "new client, old server: $(grep -h 'Invalid savegame' "$work/old-server/c/out.txt" | head -1)"
     else
         bad "new client, old server: no message that the savegame is of an older build: $(tail -3 "$work/old-server/c/out.txt" | tr '\n' '|')"

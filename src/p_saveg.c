@@ -438,10 +438,11 @@ typedef enum {
   SYNC_fragglescript = 70,
   SYNC_extra_mapthing,
   SYNC_bots,
-  SYNC_soundtarget,
   // optional controls that may vary per game
   SYNC_gamma = 200,
   SYNC_slowdoor,
+  // optional sections added by this port; far from the values upstream hands out next
+  SYNC_soundtarget = 240,
   // sync
   SYNC_end = 252,
   SYNC_sync = 253
@@ -2286,23 +2287,27 @@ void  WRITE_pusher( const pusher_t * pusher )
 // Test-only (-testsizes).  Reports, for each sector effect, the number of bytes
 // one record takes in a savegame, and whether a record survives a trip: every
 // byte of the struct is set to a value of its own (not zero), the record is
-// written, read into a zeroed struct and written again, and the two records
-// must be the same.  The writing and the reading are the ones the savegame
+// written and read into a zeroed struct, every saved field of which must equal
+// the original (a field cut to a smaller width, or left out of the writing and
+// the reading both, fails here), and written again: the two records must be
+// the same.  The writing and the reading are the ones the savegame
 // uses, so the numbers do not depend on the build, which is the point: native
 // and wasm must print the same.  Sector effects that no demo makes (ceilings,
 // light fades, elevators, friction, pushers, stopped ones) are covered this way.
 // The fields the savegame does not hold (the thinker links, the lists, the
 // pusher's source) are not read by the writing, so their values do not matter,
 // and a door's line is NULL.
-#define SG_TRIP_BODY( name, typ, wcall, rcall, SETUP ) \
+#define EQ(f)  (th.f == th2.f)
+#define SG_TRIP_BODY( name, typ, wcall, rcall, SETUP, SAME ) \
     {  typ th, th2;  size_t k;  int n, n2;                              \
        for (k = 0; k < sizeof(th); k++)  ((byte *)&th)[k] = (byte)(k * 37 + 11); \
        memset( &th2, 0, sizeof(th2) );                                  \
        SETUP;                                                           \
        save_p = buf;  wcall;  n = save_p - buf;                        \
        save_p = buf + 1;  rcall;  /* after the marker */                \
+       { int same = (SAME);  /* the saved fields come back as they were */ \
        save_p = buf2;  th = th2;  wcall;  n2 = save_p - buf2;           \
-       report( name, n, (n == n2 && memcmp( buf, buf2, n ) == 0) );     }
+       report( name, n, (same && n == n2 && memcmp( buf, buf2, n ) == 0) ); } }
 
 void P_Savegame_Effect_Sizes( void (*report)( const char * name, int bytes, int roundtrip_ok ) )
 {
@@ -2310,24 +2315,38 @@ void P_Savegame_Effect_Sizes( void (*report)( const char * name, int bytes, int 
     byte * saved_p = save_p;
 
 #define SECTOR_SETUP     th.sector = sectors;  th2.sector = sectors
+// (a boolean is written as 0 or 1: crush is set to 1)
 #define NO_SETUP         ((void)0)
-    SG_TRIP_BODY( "ceiling", ceiling_t, WRITE_ceiling( &th, 1 ), READ_ceiling_fields( &th2 ), SECTOR_SETUP );
+    SG_TRIP_BODY( "ceiling", ceiling_t, WRITE_ceiling( &th, 1 ), READ_ceiling_fields( &th2 ), { SECTOR_SETUP;  th.crush = 1; } ,
+                  EQ(type) && EQ(bottomheight) && EQ(topheight) && EQ(speed) && EQ(oldspeed) && EQ(crush) && EQ(direction) && EQ(olddirection) && EQ(tag) && EQ(new_sec_special) && EQ(old_sec_special) && EQ(new_ceilingpic) );
     SG_TRIP_BODY( "door", vldoor_t, WRITE_door( &th ),
                   { READ_door_fields( &th2 );  READ_LINE_PTR( th2.line ); },
-                  { th.sector = sectors;  th2.sector = sectors;  th.line = NULL; } );
-    SG_TRIP_BODY( "floor", floormove_t, WRITE_floor( &th ), READ_floor_fields( &th2 ), SECTOR_SETUP );
-    SG_TRIP_BODY( "plat", plat_t, WRITE_plat( &th, 1 ), READ_plat_fields( &th2 ), SECTOR_SETUP );
-    SG_TRIP_BODY( "flash", lightflash_t, WRITE_flash( &th ), READ_flash_fields( &th2 ), SECTOR_SETUP );
-    SG_TRIP_BODY( "strobe", strobe_t, WRITE_strobe( &th ), READ_strobe_fields( &th2 ), SECTOR_SETUP );
-    SG_TRIP_BODY( "glow", glow_t, WRITE_glow( &th ), READ_glow_fields( &th2 ), SECTOR_SETUP );
-    SG_TRIP_BODY( "fireflicker", fireflicker_t, WRITE_fireflicker( &th ), READ_fireflicker_fields( &th2 ), SECTOR_SETUP );
-    SG_TRIP_BODY( "lightfade", lightfader_t, WRITE_lightfade( &th ), READ_lightfade_fields( &th2 ), SECTOR_SETUP );
-    SG_TRIP_BODY( "elevator", elevator_t, WRITE_elevator( &th ), READ_elevator_fields( &th2 ), SECTOR_SETUP );
-    SG_TRIP_BODY( "scroll", scroll_t, WRITE_scroll( &th ), READ_scroll_fields( &th2 ), NO_SETUP );
+                  { th.sector = sectors;  th2.sector = sectors;  th.line = NULL; } ,
+                  EQ(type) && EQ(topheight) && EQ(speed) && EQ(direction) && EQ(topwait) && EQ(topcountdown) && EQ(lighttag) && EQ(line) );
+    SG_TRIP_BODY( "floor", floormove_t, WRITE_floor( &th ), READ_floor_fields( &th2 ), { SECTOR_SETUP;  th.crush = 1; } ,
+                  EQ(type) && EQ(crush) && EQ(floordestheight) && EQ(speed) && EQ(direction) && EQ(new_sec_special) && EQ(old_sec_special) && EQ(new_floorpic) && EQ(new_floortype) );
+    SG_TRIP_BODY( "plat", plat_t, WRITE_plat( &th, 1 ), READ_plat_fields( &th2 ), { SECTOR_SETUP;  th.crush = 1; } ,
+                  EQ(type) && EQ(speed) && EQ(low) && EQ(high) && EQ(crush) && EQ(tag) && EQ(wait) && EQ(count) && EQ(status) && EQ(oldstatus) );
+    SG_TRIP_BODY( "flash", lightflash_t, WRITE_flash( &th ), READ_flash_fields( &th2 ), SECTOR_SETUP ,
+                  EQ(minlight) && EQ(maxlight) && EQ(mintime) && EQ(maxtime) && EQ(count) );
+    SG_TRIP_BODY( "strobe", strobe_t, WRITE_strobe( &th ), READ_strobe_fields( &th2 ), SECTOR_SETUP ,
+                  EQ(minlight) && EQ(maxlight) && EQ(darktime) && EQ(brighttime) && EQ(count) );
+    SG_TRIP_BODY( "glow", glow_t, WRITE_glow( &th ), READ_glow_fields( &th2 ), SECTOR_SETUP ,
+                  EQ(minlight) && EQ(maxlight) && EQ(direction) );
+    SG_TRIP_BODY( "fireflicker", fireflicker_t, WRITE_fireflicker( &th ), READ_fireflicker_fields( &th2 ), SECTOR_SETUP ,
+                  EQ(minlight) && EQ(maxlight) && EQ(count) );
+    SG_TRIP_BODY( "lightfade", lightfader_t, WRITE_lightfade( &th ), READ_lightfade_fields( &th2 ), SECTOR_SETUP ,
+                  EQ(destlight) && EQ(speed) );
+    SG_TRIP_BODY( "elevator", elevator_t, WRITE_elevator( &th ), READ_elevator_fields( &th2 ), SECTOR_SETUP ,
+                  EQ(type) && EQ(direction) && EQ(floordestheight) && EQ(ceilingdestheight) && EQ(speed) );
+    SG_TRIP_BODY( "scroll", scroll_t, WRITE_scroll( &th ), READ_scroll_fields( &th2 ), NO_SETUP ,
+                  EQ(type) && EQ(affectee) && EQ(control) && EQ(accel) && EQ(dx) && EQ(dy) && EQ(last_height) && EQ(vdx) && EQ(vdy) );
 #ifdef FRICTIONTHINKER
-    SG_TRIP_BODY( "friction", friction_t, WRITE_friction( &th ), READ_friction_fields( &th2 ), NO_SETUP );
+    SG_TRIP_BODY( "friction", friction_t, WRITE_friction( &th ), READ_friction_fields( &th2 ), NO_SETUP ,
+                  EQ(affectee) && EQ(friction) && EQ(movefactor) );
 #endif
-    SG_TRIP_BODY( "pusher", pusher_t, WRITE_pusher( &th ), READ_pusher_fields( &th2 ), NO_SETUP );
+    SG_TRIP_BODY( "pusher", pusher_t, WRITE_pusher( &th ), READ_pusher_fields( &th2 ), NO_SETUP ,
+                  EQ(type) && EQ(affectee) && EQ(x_mag) && EQ(y_mag) && EQ(magnitude) && EQ(radius) && EQ(x_src) && EQ(y_src) );
     save_p = saved_p;
 }
 
@@ -4548,6 +4567,8 @@ boolean P_Savegame_Read_header( savegame_info_t * infop, byte read_netgame )
     if( sg_portable )  sg_version -= SG_PORTABLE_BASE;
     if( sg_version < MIN_READSAVE_VERSION )  goto wrong;
     if( sg_version > MAX_READSAVE_VERSION )  goto wrong;
+    // Nothing writes the portable layout with another version than this one.
+    if( sg_portable && sg_version != DL_VERSION )  goto wrong;
     // A savegame of the old layout holds raw memory of the machine that
     // wrote it. It can only be read by the same kind of machine, which
     // a game that is joined cannot know.
@@ -4575,7 +4596,7 @@ boolean P_Savegame_Read_header( savegame_info_t * infop, byte read_netgame )
    goto failed;
 
  old_layout:
-   snprintf( infop->msg, 60, "Invalid savegame: the server is an older build\n" );
+   snprintf( infop->msg, sizeof(infop->msg), "Invalid savegame: the server's savegame is not the portable layout (an older or upstream build)\n" );
    goto failed;
 
  failed:
