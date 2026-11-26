@@ -67,6 +67,7 @@
 #include "d_netfil.h"
 #include "d_clisrv.h"
 #include "i_tcp.h"
+#include "i_vnet.h"
 #include "m_swap.h"
 #include "z_zone.h"
 
@@ -1938,6 +1939,7 @@ boolean D_Startup_NetGame(void)
             I_Error("usage : -bandwidth <byte_per_sec>");
     }
 
+    I_VNet_Set_Packet_Length();  // vnet: a datagram is at most 1100 bytes
     software_MAXPACKETLENGTH=hardware_MAXPACKETLENGTH;
     if(M_CheckParm ("-packetsize"))
     {
