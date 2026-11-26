@@ -388,6 +388,7 @@ static void vn_end_game(void)
         for( n=1; n<MAXNETNODES; n++ )
             Net_CloseConnection(n, 1);
         D_CloseConnection();
+        D_Quit_NetGame_Closed();   // what D_Quit_NetGame leaves: CL_ConnectToServer must see it
     }
 
     if( dedicated )
@@ -402,7 +403,7 @@ static void vn_end_game(void)
     {
         vn_say("vnet: ending the network game");
         // The rest of the game's way out: "exitgame" (CL_Reset, D_StartTitle;
-        // its D_Quit_NetGame has nothing left to do).
+        // its D_Quit_NetGame has nothing left to do, D_Quit_NetGame_Closed did its state).
         Command_ExitGame_f();
     }
     else

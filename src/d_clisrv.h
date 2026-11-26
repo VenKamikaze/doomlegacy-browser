@@ -661,6 +661,7 @@ boolean Game_Playing( void );
 // Broadcasts special packets to other players
 // to notify of game exit.
 void    D_Quit_NetGame (void);
+void    D_Quit_NetGame_Closed (void);
 
 // Wait Player interface.
 void    D_WaitPlayer_Setup( void );

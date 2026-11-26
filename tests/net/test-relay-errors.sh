@@ -58,6 +58,13 @@ fi
 want() { [ -z "$only" ] || [[ "$1" =~ $only ]]; }
 has() { grep -qE -- "$2" "$1/out.txt" 2>/dev/null; }   # has DIR REGEX
 alive() { kill -0 "$1" 2>/dev/null; }
+# title_screen FILE PID: the game is running its main loop again after leaving the network game:
+# its -testdump file grows over 2 s (a game stuck in the connect screen writes nothing)
+title_screen() {
+    local a b
+    a="$(t_tics "$1")"; sleep 2; b="$(t_tics "$1")"
+    kill -0 "$2" 2>/dev/null && [ "$b" -gt "$a" ]
+}
 
 # wait_for DIR REGEX SECONDS: the message appears in the game's output within the time
 wait_msg() { t_wait_for "$1/out.txt" "$2" "$3"; }
@@ -110,8 +117,8 @@ unreachable_case() {
     t_start_relay; local dead="127.0.0.1:$relay_port"
     t_stop_pid "$relay_pid"
     local t0=$SECONDS
-    t_game ru-server -relay "$dead" -server 1 -warp 1 1;           local sp=$game_pid sd="$game_dir"
-    t_game ru-client -relay "$dead" -connect ABC234;                local cp=$game_pid cd="$game_dir"
+    t_game ru-server -relay "$dead" -server 1 -warp 1 1 -testdump "$t_tmp/ru-server/s.bin"; local sp=$game_pid sd="$game_dir"
+    t_game ru-client -relay "$dead" -connect ABC234 -testdump "$t_tmp/ru-client/c.bin"; local cp=$game_pid cd="$game_dir"
     t_game ru-dedicated -relay "$dead" -dedicated;                  local dp=$game_pid dd="$game_dir"
     wait_msg "$sd" 'vnet: closed' 25;  local ts=$((SECONDS - t0))
     wait_msg "$cd" 'vnet: closed' 25;  local tc=$((SECONDS - t0))
@@ -122,6 +129,8 @@ unreachable_case() {
     t_check "joiner: says the relay did not answer ($tc s)" has "$cd" 'vnet: cannot join room ABC234 on relay .*did not answer'
     t_check "joiner: ended the network game, still running at the title screen, within 20 s" \
         bash -c 'grep -q "vnet: ending the network game" "$1/out.txt" && grep -q "vnet: closed" "$1/out.txt" && kill -0 "$2" && [ "$3" -le 20 ]' _ "$cd" "$cp" "$tc"
+    t_check "server: back at the title screen (its tics go on)" title_screen "$sd/s.bin" "$sp"
+    t_check "joiner: back at the title screen (its tics go on)" title_screen "$cd/c.bin" "$cp"
     t_check "dedicated: exits with status 255 (got $dst) after saying so, within 25 s ($td s)" \
         bash -c '[ "$1" = 255 ] && grep -q "a dedicated server cannot run without its room" "$2/out.txt" && [ "$3" -le 25 ]' _ "$dst" "$dd" "$td"
 }
@@ -129,11 +138,12 @@ unreachable_case() {
 no_such_room_case() {
     t_note "no-such-room: a well-formed code that is not a room"
     t_start_relay; local R="127.0.0.1:$relay_port" t0=$SECONDS
-    t_game nsr -relay "$R" -connect ZZZZZZ; local p=$game_pid d="$game_dir"
+    t_game nsr -relay "$R" -connect ZZZZZZ -testdump "$t_tmp/nsr/c.bin"; local p=$game_pid d="$game_dir"
     wait_msg "$d" 'vnet: closed' 15; local took=$((SECONDS - t0))
     t_check "joiner: 'no such room' on stdout" has "$d" 'vnet: cannot join room ZZZZZZ on relay .*: no such room'
     t_check "joiner: ended the network game and is still running, within 10 s ($took s)" \
         bash -c 'grep -q "vnet: closed" "$1/out.txt" && kill -0 "$2" && [ "$3" -le 10 ]' _ "$d" "$p" "$took"
+    t_check "joiner: back at the title screen (its tics go on)" title_screen "$d/c.bin" "$p"
 }
 
 room_full_case() {
@@ -143,11 +153,12 @@ room_full_case() {
     t_game rf-a -relay "$R" -connect "$code" -testdump "$t_tmp/rf-a/a.bin"; local ap=$game_pid ad="$game_dir"
     wait_msg "$ad" 'vnet: joined room' 15
     local t0=$SECONDS
-    t_game rf-c -relay "$R" -connect "$code"; local cp=$game_pid cd="$game_dir"
+    t_game rf-c -relay "$R" -connect "$code" -testdump "$t_tmp/rf-c/c.bin"; local cp=$game_pid cd="$game_dir"
     wait_msg "$cd" 'vnet: closed' 15; local took=$((SECONDS - t0))
     t_check "the second joiner is told the room is full" has "$cd" "vnet: cannot join room $code on relay .*: room is full"
     t_check "and leaves the network game at once and keeps running, within 10 s ($took s)" \
         bash -c 'grep -q "vnet: closed" "$1/out.txt" && kill -0 "$2" && [ "$3" -le 10 ]' _ "$cd" "$cp" "$took"
+    t_check "the refused joiner is back at the title screen (its tics go on)" title_screen "$cd/c.bin" "$cp"
     local n=0 i
     for i in $(seq 1 100); do n="$(t_tics "$ad/a.bin")"; [ "$n" -gt 35 ] && break; sleep 0.1; done
     t_check "the first joiner is in the room (the room takes 2 players) and playing ($n tics)" \
@@ -163,6 +174,7 @@ game_full_case() {
     wait_msg "$ad" 'vnet: closed' 25; local took=$((SECONDS - t0))
     t_check "the joiner entered the room, was refused by the server and left the network game, within 20 s ($took s)" \
         bash -c 'grep -q "vnet: joined room" "$1/out.txt" && grep -q "vnet: closed" "$1/out.txt" && kill -0 "$2" && [ "$3" -le 20 ]' _ "$ad" "$ap" "$took"
+    t_check "the refused joiner is back at the title screen (its tics go on)" title_screen "$ad/a.bin" "$ap"
     local s1 s2; s1="$(t_tics "$srv_dir/s.bin")"; sleep 3; s2="$(t_tics "$srv_dir/s.bin")"
     t_check "the refused player never got into the game (no savegame, no state from the server)" \
         bash -c '! grep -q "PT_STATE: gametic" "$1/out.txt"' _ "$ad"
@@ -186,6 +198,8 @@ relay_dies_case() {
     t_check "the player says the same" has "$ad" 'vnet: the relay session ended: .*relay went silent'
     t_check "both keep running at the title screen, within 6 s of the relay's death ($took s)" \
         bash -c 'grep -q "vnet: ending the network game" "$1/out.txt" "$2/out.txt" && kill -0 "$3" && kill -0 "$4" && [ "$5" -le 6 ]' _ "$sd" "$ad" "$sp" "$ap" "$took"
+    t_check "the host is back at the title screen (its tics go on)" title_screen "$sd/s.bin" "$sp"
+    t_check "the player is back at the title screen (its tics go on)" title_screen "$ad/a.bin" "$ap"
 }
 
 relay_dies_dedicated_case() {
@@ -206,6 +220,7 @@ relay_dies_dedicated_case() {
     wait_msg "$ad" 'vnet: closed' 10
     t_check "its player leaves the network game too and keeps running" \
         bash -c 'grep -q "vnet: closed" "$1/out.txt" && kill -0 "$2"' _ "$ad" "$ap"
+    t_check "the player is back at the title screen (its tics go on)" title_screen "$ad/a.bin" "$ap"
 }
 
 relay_drops_case() {
@@ -223,6 +238,7 @@ relay_drops_case() {
         has "$ad" 'vnet: the relay session ended: session closed by the relay'
     t_check "and leaves the network game and keeps running, within 2 s ($took s)" \
         bash -c 'grep -q "vnet: closed" "$1/out.txt" && kill -0 "$2" && [ "$3" -le 2 ]' _ "$ad" "$ap" "$took"
+    t_check "the player is back at the title screen (its tics go on)" title_screen "$ad/a.bin" "$ap"
 }
 
 host_lost_case() {
@@ -251,11 +267,12 @@ host_silent_case() {
     started_room hs-server "$R" -server 1 -warp 1 1 || return
     kill -STOP "$srv_pid"
     local t0=$SECONDS
-    t_game hs-a -relay "$R" -connect "$code"; local ap=$game_pid ad="$game_dir"
+    t_game hs-a -relay "$R" -connect "$code" -testdump "$t_tmp/hs-a/a.bin"; local ap=$game_pid ad="$game_dir"
     wait_msg "$ad" 'vnet: closed' 40; local took=$((SECONDS - t0))
     t_check "the joiner says the host did not answer" has "$ad" 'vnet: cannot join room .*: the host did not answer within 20 s'
     t_check "and leaves the network game and keeps running, within 30 s ($took s)" \
         bash -c 'grep -q "vnet: closed" "$1/out.txt" && kill -0 "$2" && [ "$3" -le 30 ]' _ "$ad" "$ap" "$took"
+    t_check "the joiner is back at the title screen (its tics go on)" title_screen "$ad/a.bin" "$ap"
 }
 
 # ---------------------------------------------------------------------------
