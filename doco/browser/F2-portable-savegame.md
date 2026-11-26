@@ -180,3 +180,7 @@ An independent review found no defect in the savegame code and three checks that
 - **L43** (`bugs.md`): the loader does not bound the sector and line indices (`READ_SECTOR_PTR`, `READ_LINE_PTR`) or `inventorySlotNum`; pre-existing, not changed, matters for the hostile-peer briefs.
 
 Re-run on the fixed tree: `tests/savegame-portable.sh` 102 passed, 0 failed, 430 s; `tests/savegame-old.sh` 12 passed, 0 failed, 134 s; `tests/net/test-hot-join.sh` PASS 56 s (1,439 identical records, tics 361 to 1,799); `tests/demo-hash.sh` 11 of 11 identical, 355 s.
+
+### Fix round 2 (26 Nov 2026)
+
+Fix round 1 moved the nine L10 left-shift sites of `src/p_saveg.c` again, so `tests/asan-demos.sh --rebuild` listed them as new in its hot-join part and exited 1. `tests/asan-known.txt` has them at their new lines (981, 983, 1084, 1101, 2408, 2409, 2867, 2868, 4306; each checked to be the same source line as before). `tests/asan-demos.sh --rebuild`: exit 0, `53 sites: 53 known, 0 new`, 241 s (the hot-join comparison fails as before, L29; only its reports count).
