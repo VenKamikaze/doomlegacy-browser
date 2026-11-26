@@ -102,7 +102,7 @@ A savegame written by a 64-bit native build loads into the wasm32 build, and the
 
 ## Outcome
 
-Status: **implemented, 26 Nov 2026**, on branch `browser/F2-portable-savegame` (pushed, not merged). All eight criteria pass; the numbers and the failure proofs are below. Besides what the brief asked for, the check "state as loaded equals state as saved" found five more things a savegame lost (`bugs.md` L36 to L40); they are fixed here because AC3 cannot pass without them (see "Decisions for the coordinator").
+Status: **done, 26 Nov 2026.** Two independent reviews (the first: merge after fixes, for three test checks that could pass while broken; the second: merge), two fix rounds, coordinator verification at the end. The implementer's report as it stood before the fix rounds: All eight criteria pass; the numbers and the failure proofs are below. Besides what the brief asked for, the check "state as loaded equals state as saved" found five more things a savegame lost (`bugs.md` L36 to L40); they are fixed here because AC3 cannot pass without them (see "Decisions for the coordinator").
 
 **What landed** (commits on the branch: `71d2dd1` the three loader fixes alone, in upstream's style, `git format-patch -1 71d2dd1 --relative=src` gives a trunk patch; `8f3d329` the portable layout, the soundtarget, the test options; `64f98bf` the tests; and the documentation commit)
 
@@ -184,3 +184,34 @@ Re-run on the fixed tree: `tests/savegame-portable.sh` 102 passed, 0 failed, 430
 ### Fix round 2 (26 Nov 2026)
 
 Fix round 1 moved the nine L10 left-shift sites of `src/p_saveg.c` again, so `tests/asan-demos.sh --rebuild` listed them as new in its hot-join part and exited 1. `tests/asan-known.txt` has them at their new lines (981, 983, 1084, 1101, 2408, 2409, 2867, 2868, 4306; each checked to be the same source line as before). `tests/asan-demos.sh --rebuild`: exit 0, `53 sites: 53 known, 0 new`, 241 s (the hot-join comparison fails as before, L29; only its reports count).
+
+## Review and coordinator verification (26 Nov 2026)
+
+**Review.** An independent reviewer read the brief, the code and the tests in its own worktree, twice.
+- Round 1, on `75d82fd`: "merge after fixes". No defect in the savegame code, but three test checks could pass while broken:
+  - AC1 compared native with wasm only, so a reader bug that prints `roundtrip FAIL` on both builds passed (shown by swapping two ceiling reads);
+  - the trip compared record with record, so a field at the wrong width passed (shown with the ceiling `speed` at 16 bits);
+  - AC4 passed on any difference, not on the `soundtarget`.
+  It also found L43 (pre-existing, logged only) and four nits, all taken.
+- Round 2, on `eb55223`: "merge". Both of its patches now fail AC1, and so does a third that keeps the size the same. The field comparison covers every saved field of all 13 types with full-width test values.
+- Fix round 2 (`6cc05ec`) only moved nine line numbers in `tests/asan-known.txt`, so it had no review.
+- My own reading: the `soundtarget` of a mobj that has been removed but is still referenced is not saved (as upstream does for every other mobj reference); `A_Look` ignores such a target (not `MF_SHOOTABLE`), so the loaded game plays on the same.
+
+**Coordinator verification** on `eb55223` (the code; `6cc05ec` changes only `tests/asan-known.txt` and this brief), builds from clean, each test run alone on an otherwise idle 4-core machine:
+
+| Check | Result | Time |
+|---|---|---|
+| Native, wasm and relay builds from clean | built | 22 s together |
+| `tests/savegame-portable.sh` (AC1 to AC3) | 102 passed, 0 failed, 12 saves | 430 s |
+| `tests/savegame-old.sh` (AC4, AC5, the join between builds) | 12 passed, 0 failed | 133 s |
+| `tests/net/test-hot-join.sh` default, `--together`, `--no-force` | PASS each | 56, 47, 56 s |
+| `tests/net/test-relay.sh` | PASS | 96 s |
+| `tests/net/test-relay-errors.sh` | PASS | 144 s |
+| `tests/sprite-column-oob.sh` | 6 of 6 | 60 s |
+| `tests/draw-independence.sh` | PASS, 3,136 records | 92 s |
+| `tests/demo-hash.sh` (native against wasm) | 11 of 11 identical | 350 s |
+| `tests/asan-demos.sh --rebuild` on `eb55223` | exit 1: the nine moved L10 sites (fix round 2) | 239 s |
+| `tests/asan-demos.sh --rebuild` on `6cc05ec` | exit 0, 53 known sites, 0 new | 249 s |
+| Fresh clone of the branch, native build | built | 11 s |
+
+No game or relay process was left over.

@@ -9,11 +9,12 @@ You work **one chunk at a time**. For each chunk you write a brief, have it impl
 
 ## 0. Where things stand (hand-off: update this after every merge)
 
-**26 Nov 2026.** The set-up, F1, **brief 00** and **brief 01** are done and merged into `claudeai` (each brief by a `--no-ff` merge of its `browser/NN-*` branch). Next is **F2**, then F3, 02, 03, F4 before 04 (§3).
+**26 Nov 2026.** The set-up, F1, **brief 00**, **brief 01** and **F2** are done and merged into `claudeai` (each by a `--no-ff` merge of its `browser/NN-*` or `browser/Fn-*` branch). Next is **F3**, then 02, 03, F4 before 04 (§3).
 
 - The repository is tidied into upstream's SVN trunk layout (r1749). `main` keeps the pristine extract of the release archives (`b1daf91`).
 - vnet is at `ext/vnet` (`v0.5.0`, `8572c74`). Its datagrams are unordered (`ext/vnet/README.md:17`).
 - **vnet driver (01):** `src/i_vnet.c` and `src/i_vnet.h` fill the driver table; `-relay HOST:PORT` with `-server [N]`/`-dedicated` creates a room (this machine is `10.0.0.1`, the server), `-connect CODE` joins one. A relay failure ends the network game and returns to the title screen without a wait (`D_Quit_NetGame_Closed`). The wasm build compiles `i_vnet.c` as stubs; brief 04 makes it real there. `code-facts.md` §13 says what a lobby (05) must add. `scripts/build-relay.sh` builds the Go relay into `build/relay/`.
+- **Portable savegame (F2):** `src/p_saveg.c` writes every sector effect field by field at fixed widths, so a savegame (the join and the repair download) is byte-identical on x86_64 and wasm32. The header version is `SG_PORTABLE_BASE + 149` = 10149 (`sg_portable`; upstream will never reach it). Old savegames still load through the old raw path; a join to a server with the old layout is refused with a message. Each sector's `soundtarget` is saved (optional section `SYNC_soundtarget` = 240). `code-facts.md` §8 has the layout. Test options `-testsave`, `-testquit`, `-testload`, `-testsizes`, `-testcensus` (`building.md` §10); `tests/tools/run-wasm.js --put`.
 - **Builds:**
   - `scripts/build-native.sh` builds without `-ffast-math` and with `-ffp-contract=off` (through `scripts/cc-no-fast-math.sh`), `--fast-math` for upstream's flags; a flags stamp forces a clean rebuild when they change.
   - `scripts/build-wasm.sh` (`scripts/wasm.mk`, its own makefile: upstream forces `HWRENDER` for SDL): software renderer, about 8 s from clean. No page yet; the game loop blocks the page until it exits (ASYNCIFY yields are brief 02's).
@@ -23,22 +24,23 @@ You work **one chunk at a time**. For each chunk you write a brief, have it impl
   - `tests/net/test-hot-join.sh`: two native instances over UDP on loopback, a client joining a game in progress (forced race by default; `--together`, `--no-force`; `--bots` fails until F3);
   - `tests/asan-demos.sh`: ASan and UBSan with recovery, every known site in `tests/asan-known.txt` (53 sites);
   - `tests/sprite-column-oob.sh` (6/6), `scripts/run-headless.sh` (a demo to its end, exit 0);
+  - `tests/savegame-portable.sh`: every sector-effect record has the same size on both builds and survives a field-by-field trip; native and wasm saves at 12 tics of 7 demos are byte-identical; both builds load each save and play on identically, from the state as saved (102 checks, about 7 min; `--full` 9 min); `tests/savegame-old.sh`: a savegame of the build before F2 loads, and a join between the two builds is refused both ways (12 checks, about 2 min);
   - `tests/net/test-relay.sh`: three native players through a local relay, one joining in progress (`--impair SPEC`, default `lat=30`; `--dedicated`); `tests/net/test-relay-errors.sh`: 52 checks of the relay failures, each bounded and each checking the title screen.
 - **Facts:** [`code-facts.md`](code-facts.md) checks every survey claim with file:line refs and covers the network, the join, the pause handling, the blocking loops, the floats, the savegame and the music path. Read it before writing a brief.
-- **Bugs:** `bugs.md` L1-L35. Fixed inside 00 (smallest fixes, upstream-style commits on `browser/00-baseline`, no `fix/` branches): L13 (build without `HWRENDER`), L15 (`P_LoadThings`), L21 (a joining client's pause timing; now a queue ordered by tic), L22 (`dropoffz` in the savegame). **Queued:** F2 = L19 + L30, F3 = L23 + L24, F4 = L31 + L35. **For brief 04:** L29 (a slow joiner diverges). Found in 01, logged only: L32 (`I_Error` at start-up with `-server` segfaults; `i_vnet.c` works around it), L33 (a `-dedicated` server crashes on its first level load, also over UDP), L34 (the UDP driver's 512-byte limit is overwritten, so UDP always used 1,450).
+- **Bugs:** `bugs.md` L1-L43. Fixed inside 00 (smallest fixes, upstream-style commits on `browser/00-baseline`, no `fix/` branches): L13 (build without `HWRENDER`), L15 (`P_LoadThings`), L21 (a joining client's pause timing; now a queue ordered by tic), L22 (`dropoffz` in the savegame). **Fixed by F2:** L19, L30, and L36 to L40 (a load undid a corpse's size and health, lost `flags3`, a stale `ceilingz`, a player's view height). **Queued:** F3 = L23 + L24, F4 = L31 + L35. **For brief 04:** L29 (a slow joiner diverges). Found in 01, logged only: L32 (`I_Error` at start-up with `-server` segfaults; `i_vnet.c` works around it), L33 (a `-dedicated` server crashes on its first level load, also over UDP), L34 (the UDP driver's 512-byte limit is overwritten, so UDP always used 1,450). Found in F2, logged only: L41 (a joiner gets the host's automap), L42 (a failed join load returns to searching), L43 (pre-existing: the loader does not bound sector, line and inventory indices from a savegame; matters for the hostile-peer briefs).
 - **Decisions D1-D12 and the answers Q1-Q5** are in [`README.md`](README.md). The main ones:
   - joining a game in progress is in scope;
   - music is in the first release, played through OPL3 emulation with the IWAD's `GENMIDI` bank;
   - test data is Freedoom and `DOOM1.WAD`;
   - the git model is `claudeai`, `browser/NN-*` and `fix/*`.
 - **Not checked yet:** whether upstream SVN has fixed L1, L13, L15, L21 or L22, and whether its maintainer accepts patches. SourceForge can't be read from the cloud container; the user can check (F1's Outcome has the command).
-- **Next:** brief F2 (portable savegame between x86_64 and wasm32, `bugs.md` L19 and L30), once the user says go.
+- **Next:** brief F3 (bots and joining a game in progress, `bugs.md` L23 and L24), once the user says go.
 
 ## 1. Read first, in this order
 
 1. [`README.md`](README.md): the status table, decisions D1-D12, answers Q1-Q5 and the git rules. Don't reopen a settled decision inside a chunk. If one proves wrong, stop and ask the user.
 2. [`building.md`](building.md): set-up, builds, test data, the headless run and Emscripten. Everything there was checked on 19-21 Nov 2026.
-3. [`bugs.md`](bugs.md): the upstream bugs and quirks found so far (L1-L35).
+3. [`bugs.md`](bugs.md): the upstream bugs and quirks found so far (L1-L43).
 4. [`survey.md`](survey.md): the feasibility survey. It covers the network seam (`d_net.c:107-113`), hot join (`d_clisrv.c:2348`, `2570-2600`), the blocking loops, the floats in gameplay, `-ffast-math`, and other file:line refs. Its claims are **unverified** until a chunk checks them.
 5. [`F1-sprite-column-oob.md`](F1-sprite-column-oob.md): a finished brief, as a model of the format (Goal, In scope, Out of scope, Acceptance criteria, Tests, Outcome).
 6. jfsw-browser's `doco/browser/` (on its `claude` branch, the default) is the model this project follows. Read its `README.md`, `PROMPT.md`, `code-facts.md`, `bugs.md` and the briefs that match the chunk at hand (01 vnet transport, 02 Emscripten port, 03 data download, 04 browser netplay, 05 host and join, 06 deployment, and the hidden-tab and lag work). Reuse what was learnt there; don't copy its code wholesale.
