@@ -2618,6 +2618,13 @@ void P_UnArchiveThinkers(void)
                     READ32(save_p);
 #endif
                 }
+#ifdef MOBJ_HAS_FLAGS3
+                else
+                {
+                    // Not saved when it is the one of the type.
+                    mobj->flags3 = mobj->info->flags3;
+                }
+#endif
 
 #ifdef MONSTER_VARY
                 if( diff2 & MD2_monster_vary )
@@ -2625,12 +2632,20 @@ void P_UnArchiveThinkers(void)
                     mobj->vary_index = READBYTE(save_p);
                 }
                 // must be after radius, height, speed
-                mobj_varied( mobj );  // assigns fields from info even when not varied
+                {
+                    // mobj_varied assigns radius and height from info, even
+                    // when not varied, and would undo a saved radius or
+                    // height (a corpse is lower and slimmer).
+                    fixed_t  rad = mobj->radius, ht = mobj->height;
+                    mobj_varied( mobj );  // assigns fields from info even when not varied
+                    if (diff1 & MD_RADIUS)  mobj->radius = rad;
+                    if (diff1 & MD_HEIGHT)  mobj->height = ht;
+                }
 #endif
 #endif
 
                 // [WDJ] Fix old savegames for corpse health < 0.
-                if((mobj->flags & MF_CORPSE) && (mobj->health >= 0))
+                if((mobj->flags & MF_CORPSE) && (mobj->health > 0))
                 {
                     mobj->health = -mobj->health - (mobj->info->spawnhealth/2);
                 }
