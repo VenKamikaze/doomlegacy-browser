@@ -108,6 +108,8 @@ static ivn_state_t  state = IVN_OFF;
 static boolean   was_ready = false;      // reached READY at least once
 static boolean   joining = false;        // this context joins a room (a client)
 static boolean   ending = false;         // the game is being ended: no more reporting
+static boolean   opening = false;        // inside open_socket: a failure ends the game later
+static boolean   end_pending = false;    // the context failed while opening
 static uint64_t  open_time = 0;
 static boolean   host_heard = false;     // a joiner got anything from a peer
 static char      room_code[8] = "";
@@ -158,13 +160,17 @@ static void vn_fatal_arg(const char * fmt, ...)
     va_end(ap);
     printf("vnet: %s\n", buf);
     fflush(stdout);
+    // I_Error leaves a network game first (D_Quit_NetGame), which sends a
+    // packet through netbuffer; that is not set yet this early in start-up
+    // (upstream crashes the same way on "-server 1 -udpport").
+    netgame = false;
     I_Error("vnet: %s", buf);
 }
 
 static void vn_log(void * user, int level, const char * msg)
 {
     (void) user;
-    if( level <= VNET_LOG_WARN )
+    if( level <= VNET_LOG_ERROR )
     {
         printf("vnet: %s\n", msg);
         fflush(stdout);
@@ -380,13 +386,21 @@ static void vn_end_game(void)
         vn_close();   // the driver was opened but no game started
 }
 
-static void vn_failed(int code, const char * text)
+static void vn_failed(int code, const char * text, boolean host_silent)
 {
+    const char * hint = "";
+
+    if( code == VNET_ETIMEDOUT && ! host_silent )
+        hint = was_ready? ": the relay went silent"
+                        : ": the relay did not answer (is its UDP address right, and is it running?)";
     state = IVN_FAILED;
     error_code = code;
-    snprintf(error_text, sizeof(error_text), "%s", text);
+    snprintf(error_text, sizeof(error_text), "%s%s", text, hint);
     pending_count = 0;
 
+    if( host_silent )
+        vn_say("vnet: cannot join room %s: %s", room_code, error_text);
+    else
     if( ! was_ready )
     {
         if( joining )
@@ -397,7 +411,10 @@ static void vn_failed(int code, const char * text)
     else
         vn_say("vnet: the relay session ended: %s (relay %s, room %s)", error_text, relay_name, room_code);
 
-    vn_end_game();
+    if( opening )
+        end_pending = true;   // not inside the caller's start-up: at the next call
+    else
+        vn_end_game();
 }
 
 static byte vn_sendto_node(const vnet_addr * to, const void * buf, unsigned len);
@@ -437,6 +454,12 @@ void I_VNet_Poll(void)
     vnet_status_info st;
     int s;
 
+    if( end_pending && ! opening )
+    {
+        end_pending = false;
+        vn_end_game();
+        return;
+    }
     if( ! ctx || ending )  return;
 
     vnet_poll(ctx);
@@ -446,7 +469,7 @@ void I_VNet_Poll(void)
     if( s == VNET_STATUS_FAILED )
     {
         if( state != IVN_FAILED )
-            vn_failed(st.error, vnet_strerror(st.error));
+            vn_failed(st.error, vnet_strerror(st.error), false);
         return;
     }
     if( s == VNET_STATUS_READY && state == IVN_CONNECTING )
@@ -456,7 +479,7 @@ void I_VNet_Poll(void)
         && (vnet_time(ctx) - open_time) > HOST_ANSWER_LIMIT_MS )
     {
         vn_failed(VNET_ETIMEDOUT,
-                  "the host did not answer within 20 s (is the room code right, and is the host running a game?)");
+                  "the host did not answer within 20 s (is the room code right, and is the host running a game?)", true);
     }
 }
 
@@ -485,7 +508,7 @@ static byte vn_sendto_node(const vnet_addr * to, const void * buf, unsigned len)
         }
         return NE_fail;
      case VNET_ENOTCONN:
-        return NE_network_down;
+        return NE_network_unreachable;
      default:
         return NE_fail;
     }
@@ -501,7 +524,7 @@ static byte vn_send(void)
     I_VNet_Poll();
     if( ! ctx || state == IVN_FAILED || state == IVN_IDLE )
     {
-        net_error = NE_network_down;
+        net_error = NE_network_unreachable;
         return net_error;
     }
     if( nnode < 0 || nnode >= MAX_CON_NETNODE || ! nodeused[nnode] )
@@ -714,6 +737,7 @@ static boolean open_socket(void)
     state = IVN_CONNECTING;
     was_ready = false;
     ending = false;
+    end_pending = false;
     host_heard = false;
     reported_oversize = false;
     error_code = 0;
@@ -728,7 +752,9 @@ static boolean open_socket(void)
     net_packetheader_length = 28;   // ip + udp, for the statistics
     doomcom->extratics = 1;         // as the UDP driver: the internet is very high ping
 
+    opening = true;
     I_VNet_Poll();
+    opening = false;
     return true;
 }
 
