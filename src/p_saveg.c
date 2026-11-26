@@ -128,6 +128,15 @@
 #define MIN_READSAVE_VERSION  144
 #define MAX_READSAVE_VERSION  DL_VERSION
 
+// The portable layout of the sector effects.  Savegame versions 144 to 149
+// write them as raw memory, which differs between a 64-bit and a 32-bit
+// build (see the sector effects below).  A savegame written with the
+// portable layout has the version number SG_PORTABLE_BASE + the version of
+// the rest of the format (149).  The base is far above any version number
+// upstream is going to use, so the two cannot meet.  sg_version has the
+// version without the base, and sg_portable says which layout it is.
+#define SG_PORTABLE_BASE  10000
+
 
 // Enable code for reading VERSION 144 format light thinkers.
 #define READ_LF_VER_144    1
@@ -152,6 +161,7 @@
 byte * save_p;
 boolean  save_game_abort = 0;
 int  sg_version = 0;
+boolean  sg_portable = 0;  // sector effects in the portable layout
 
 // =======================================================================
 //          Save Buffer Support
@@ -431,6 +441,8 @@ typedef enum {
   // optional controls that may vary per game
   SYNC_gamma = 200,
   SYNC_slowdoor,
+  // optional sections added by this port; far from the values upstream hands out next
+  SYNC_soundtarget = 240,
   // sync
   SYNC_end = 252,
   SYNC_sync = 253
@@ -729,9 +741,14 @@ void P_ArchivePlayers(void)
             WRITEBYTE(save_p, ply->inventorySlotNum);
             for (j = 0; j < ply->inventorySlotNum; j++)
             {
-                WRITEMEM(save_p, &ply->inventory[j], sizeof(ply->inventory[j]));
+                WRITEBYTE(save_p, ply->inventory[j].type);
+                WRITEBYTE(save_p, ply->inventory[j].count);
             }
         }
+
+        // Portable layout: the view height is not always the default, after a fall.
+        WRITEFIXED(save_p, ply->viewheight);
+        WRITEFIXED(save_p, ply->deltaviewheight);
 
         SG_Writebuf();
     }
@@ -865,14 +882,21 @@ void P_UnArchivePlayers(void)
             ply->inventorySlotNum = READBYTE(save_p);
             for (j = 0; j < ply->inventorySlotNum; j++)
             {
-                READMEM(save_p, &ply->inventory[j], sizeof(ply->inventory[j]));
+                ply->inventory[j].type = READBYTE(save_p);
+                ply->inventory[j].count = READBYTE(save_p);
             }
         }
 
         for (j = 0; j < NUMWEAPONS; j++)
             ply->weaponowned[j] = (flags & (1 << j)) != 0;
 
-        ply->viewheight = cv_viewheight.value << FRACBITS;
+        if( sg_portable )
+        {
+            ply->viewheight = READFIXED(save_p);
+            ply->deltaviewheight = READFIXED(save_p);
+        }
+        else
+            ply->viewheight = cv_viewheight.value << FRACBITS;
         if (EN_heretic)
         {
             if (ply->powers[pw_weaponlevel2])
@@ -1796,27 +1820,21 @@ enum
 // of all the sector effects having the thinker_t links and sector ptr as
 // the first fields.
 // There will be no compiler errors when this fails !!
-// It writes the thinker fields raw, from the start field, to the end
+// It reads the thinker fields raw, from the start field, to the end
 // of the structure.
 
-// Include writing and reading the sector ptr.
-#define WRITE_SECTOR_THINKER(th, typ, field) \
-  { int offset = offsetof( typ, field );\
-    WRITE_SECTOR_PTR( (th)->sector );\
-    WRITEMEM(save_p, ((byte *)(th))+offset, (sizeof(*th)-offset)); }
+// The raw layout is the one of savegame versions 144 to 149.  It depends
+// on the compiler and on the size of a pointer (the tail padding of a struct
+// differs between a 64-bit and a 32-bit build), so it cannot be passed
+// between such machines.  It is only read, to load savegames written before
+// the portable layout; the portable layout is below.
 
+// Include reading the sector ptr.
 #define READ_SECTOR_THINKER(th, typ, field) \
   { int offset = offsetof( typ, field );\
     READ_SECTOR_PTR( (th)->sector );\
     READMEM(save_p, ((byte *)(th))+offset, (sizeof(*th)-offset));\
     P_AddThinker(&(th)->thinker); }
-
-#ifdef WRITE_LF_VER_144
-#define WRITE144_SECTOR_THINKER(th, th144, typ, field) \
-  { int offset = offsetof( typ, field );\
-    WRITE_SECTOR_PTR( (th)->sector );\
-    WRITEMEM(save_p, ((byte *)(th144))+offset, (sizeof(*th144)-offset)); }
-#endif
 
 #ifdef READ_LF_VER_144
 #define READ144_SECTOR_THINKER(th, th144, typ, field) \
@@ -1828,25 +1846,348 @@ enum
 
 
 // No extra fields
-#define WRITE_THINKER(th, typ, field) \
-  { int offset = offsetof( typ, field );\
-    WRITEMEM(save_p, ((byte *)(th))+offset, (sizeof(*th)-offset)); }
-
 #define READ_THINKER(th, typ, field) \
   { int offset = offsetof( typ, field );\
     READMEM(save_p, ((byte *)(th))+offset, (sizeof(*th)-offset));\
     P_AddThinker(&(th)->thinker); }
 
 
+// The portable layout of the sector effects (savegame version
+// SG_PORTABLE_BASE + 149).  Each field is written by itself, in the order
+// of its struct, at a fixed width and in the byte order of WRITE16/WRITE32:
+// a boolean or an int8_t is one byte, an enum is 32 bits, a short or a
+// lightlev_t is 16 bits, an int or a fixed_t is 32 bits.  No padding, no
+// pointer.  The sector is written as an index (WRITE_SECTOR_PTR), as before.
+// A savegame of this layout is the same on x86_64 and on wasm32.
 
-// Called for stopped ceiling or active ceiling.
+static
+void  WRITE_ceiling_fields( const ceiling_t * ceilp )
+{
+    WRITE_SECTOR_PTR( ceilp->sector );
+    WRITE32(save_p, ceilp->type);
+    WRITEFIXED(save_p, ceilp->bottomheight);
+    WRITEFIXED(save_p, ceilp->topheight);
+    WRITEFIXED(save_p, ceilp->speed);
+    WRITEFIXED(save_p, ceilp->oldspeed);
+    WRITEBOOLEAN(save_p, ceilp->crush);
+    WRITEBYTE(save_p, ceilp->direction);
+    WRITEBYTE(save_p, ceilp->olddirection);
+    WRITEU16(save_p, ceilp->tag);
+    WRITE16(save_p, ceilp->new_sec_special);
+    WRITE16(save_p, ceilp->old_sec_special);
+    WRITE16(save_p, ceilp->new_ceilingpic);
+    // ceilinglist* does not need to be saved
+}
+
+static
+void  READ_ceiling_fields( ceiling_t * ceilp )
+{
+    READ_SECTOR_PTR( ceilp->sector );
+    ceilp->type = READ32(save_p);
+    ceilp->bottomheight = READFIXED(save_p);
+    ceilp->topheight = READFIXED(save_p);
+    ceilp->speed = READFIXED(save_p);
+    ceilp->oldspeed = READFIXED(save_p);
+    ceilp->crush = READBOOLEAN(save_p);
+    ceilp->direction = (int8_t) READBYTE(save_p);
+    ceilp->olddirection = (int8_t) READBYTE(save_p);
+    ceilp->tag = READU16(save_p);
+    ceilp->new_sec_special = READ16(save_p);
+    ceilp->old_sec_special = READ16(save_p);
+    ceilp->new_ceilingpic = READ16(save_p);
+}
+
+static
+void  WRITE_plat_fields( const plat_t * platp )
+{
+    WRITE_SECTOR_PTR( platp->sector );
+    WRITE32(save_p, platp->type);
+    WRITEFIXED(save_p, platp->speed);
+    WRITEFIXED(save_p, platp->low);
+    WRITEFIXED(save_p, platp->high);
+    WRITEBOOLEAN(save_p, platp->crush);
+    WRITEU16(save_p, platp->tag);
+    WRITE32(save_p, platp->wait);
+    WRITE32(save_p, platp->count);
+    WRITE32(save_p, platp->status);
+    WRITE32(save_p, platp->oldstatus);
+    // platlist* does not need to be saved
+}
+
+static
+void  READ_plat_fields( plat_t * platp )
+{
+    READ_SECTOR_PTR( platp->sector );
+    platp->type = READ32(save_p);
+    platp->speed = READFIXED(save_p);
+    platp->low = READFIXED(save_p);
+    platp->high = READFIXED(save_p);
+    platp->crush = READBOOLEAN(save_p);
+    platp->tag = READU16(save_p);
+    platp->wait = READ32(save_p);
+    platp->count = READ32(save_p);
+    platp->status = READ32(save_p);
+    platp->oldstatus = READ32(save_p);
+}
+
+static
+void  WRITE_door_fields( const vldoor_t * door )
+{
+    WRITE_SECTOR_PTR( door->sector );
+    WRITE32(save_p, door->type);
+    WRITEFIXED(save_p, door->topheight);
+    WRITEFIXED(save_p, door->speed);
+    WRITE32(save_p, door->direction);
+    WRITE32(save_p, door->topwait);
+    WRITE32(save_p, door->topcountdown);
+    WRITEU16(save_p, door->lighttag);
+    // The line follows, as a line index.
+}
+
+static
+void  READ_door_fields( vldoor_t * door )
+{
+    READ_SECTOR_PTR( door->sector );
+    door->type = READ32(save_p);
+    door->topheight = READFIXED(save_p);
+    door->speed = READFIXED(save_p);
+    door->direction = READ32(save_p);
+    door->topwait = READ32(save_p);
+    door->topcountdown = READ32(save_p);
+    door->lighttag = READU16(save_p);
+}
+
+static
+void  WRITE_floor_fields( const floormove_t * floormv )
+{
+    WRITE_SECTOR_PTR( floormv->sector );
+    WRITE32(save_p, floormv->type);
+    WRITEBOOLEAN(save_p, floormv->crush);
+    WRITEFIXED(save_p, floormv->floordestheight);
+    WRITEFIXED(save_p, floormv->speed);
+    WRITEBYTE(save_p, floormv->direction);
+    WRITE16(save_p, floormv->new_sec_special);
+    WRITE16(save_p, floormv->old_sec_special);
+    WRITE16(save_p, floormv->new_floorpic);
+    WRITE16(save_p, floormv->new_floortype);
+}
+
+static
+void  READ_floor_fields( floormove_t * floormv )
+{
+    READ_SECTOR_PTR( floormv->sector );
+    floormv->type = READ32(save_p);
+    floormv->crush = READBOOLEAN(save_p);
+    floormv->floordestheight = READFIXED(save_p);
+    floormv->speed = READFIXED(save_p);
+    floormv->direction = (int8_t) READBYTE(save_p);
+    floormv->new_sec_special = READ16(save_p);
+    floormv->old_sec_special = READ16(save_p);
+    floormv->new_floorpic = READ16(save_p);
+    floormv->new_floortype = READ16(save_p);
+}
+
+static
+void  WRITE_flash_fields( const lightflash_t * flash )
+{
+    WRITE_SECTOR_PTR( flash->sector );
+    WRITE16(save_p, flash->minlight);
+    WRITE16(save_p, flash->maxlight);
+    WRITE32(save_p, flash->mintime);
+    WRITE32(save_p, flash->maxtime);
+    WRITE32(save_p, flash->count);
+}
+
+static
+void  READ_flash_fields( lightflash_t * flash )
+{
+    READ_SECTOR_PTR( flash->sector );
+    flash->minlight = READ16(save_p);
+    flash->maxlight = READ16(save_p);
+    flash->mintime = READ32(save_p);
+    flash->maxtime = READ32(save_p);
+    flash->count = READ32(save_p);
+}
+
+static
+void  WRITE_strobe_fields( const strobe_t * strobe )
+{
+    WRITE_SECTOR_PTR( strobe->sector );
+    WRITE16(save_p, strobe->minlight);
+    WRITE16(save_p, strobe->maxlight);
+    WRITE32(save_p, strobe->darktime);
+    WRITE32(save_p, strobe->brighttime);
+    WRITE32(save_p, strobe->count);
+}
+
+static
+void  READ_strobe_fields( strobe_t * strobe )
+{
+    READ_SECTOR_PTR( strobe->sector );
+    strobe->minlight = READ16(save_p);
+    strobe->maxlight = READ16(save_p);
+    strobe->darktime = READ32(save_p);
+    strobe->brighttime = READ32(save_p);
+    strobe->count = READ32(save_p);
+}
+
+static
+void  WRITE_glow_fields( const glow_t * glow )
+{
+    WRITE_SECTOR_PTR( glow->sector );
+    WRITE16(save_p, glow->minlight);
+    WRITE16(save_p, glow->maxlight);
+    WRITEBYTE(save_p, glow->direction);
+}
+
+static
+void  READ_glow_fields( glow_t * glow )
+{
+    READ_SECTOR_PTR( glow->sector );
+    glow->minlight = READ16(save_p);
+    glow->maxlight = READ16(save_p);
+    glow->direction = (int8_t) READBYTE(save_p);
+}
+
+static
+void  WRITE_fireflicker_fields( const fireflicker_t * ff )
+{
+    WRITE_SECTOR_PTR( ff->sector );
+    WRITE16(save_p, ff->minlight);
+    WRITE16(save_p, ff->maxlight);
+    WRITE32(save_p, ff->count);
+}
+
+static
+void  READ_fireflicker_fields( fireflicker_t * ff )
+{
+    READ_SECTOR_PTR( ff->sector );
+    ff->minlight = READ16(save_p);
+    ff->maxlight = READ16(save_p);
+    ff->count = READ32(save_p);
+}
+
+static
+void  WRITE_lightfade_fields( const lightfader_t * fade )
+{
+    WRITE_SECTOR_PTR( fade->sector );
+    WRITE16(save_p, fade->destlight);
+    WRITE16(save_p, fade->speed);
+}
+
+static
+void  READ_lightfade_fields( lightfader_t * fade )
+{
+    READ_SECTOR_PTR( fade->sector );
+    fade->destlight = READ16(save_p);
+    fade->speed = READ16(save_p);
+}
+
+static
+void  WRITE_elevator_fields( const elevator_t * elevator )
+{
+    WRITE_SECTOR_PTR( elevator->sector );
+    WRITE32(save_p, elevator->type);
+    WRITEBYTE(save_p, elevator->direction);
+    WRITEFIXED(save_p, elevator->floordestheight);
+    WRITEFIXED(save_p, elevator->ceilingdestheight);
+    WRITEFIXED(save_p, elevator->speed);
+}
+
+static
+void  READ_elevator_fields( elevator_t * elevator )
+{
+    READ_SECTOR_PTR( elevator->sector );
+    elevator->type = READ32(save_p);
+    elevator->direction = (int8_t) READBYTE(save_p);
+    elevator->floordestheight = READFIXED(save_p);
+    elevator->ceilingdestheight = READFIXED(save_p);
+    elevator->speed = READFIXED(save_p);
+}
+
+// The next three have no sector ptr.
+static
+void  WRITE_scroll_fields( const scroll_t * scroll )
+{
+    WRITE32(save_p, scroll->type);
+    WRITE32(save_p, scroll->affectee);
+    WRITE32(save_p, scroll->control);
+    WRITE32(save_p, scroll->accel);
+    WRITEFIXED(save_p, scroll->dx);
+    WRITEFIXED(save_p, scroll->dy);
+    WRITEFIXED(save_p, scroll->last_height);
+    WRITEFIXED(save_p, scroll->vdx);
+    WRITEFIXED(save_p, scroll->vdy);
+}
+
+static
+void  READ_scroll_fields( scroll_t * scroll )
+{
+    scroll->type = READ32(save_p);
+    scroll->affectee = READ32(save_p);
+    scroll->control = READ32(save_p);
+    scroll->accel = READ32(save_p);
+    scroll->dx = READFIXED(save_p);
+    scroll->dy = READFIXED(save_p);
+    scroll->last_height = READFIXED(save_p);
+    scroll->vdx = READFIXED(save_p);
+    scroll->vdy = READFIXED(save_p);
+}
+
+#ifdef FRICTIONTHINKER
+static
+void  WRITE_friction_fields( const friction_t * friction )
+{
+    WRITE32(save_p, friction->affectee);
+    WRITE32(save_p, friction->friction);
+    WRITE32(save_p, friction->movefactor);
+}
+
+static
+void  READ_friction_fields( friction_t * friction )
+{
+    friction->affectee = READ32(save_p);
+    friction->friction = READ32(save_p);
+    friction->movefactor = READ32(save_p);
+}
+#endif
+
+static
+void  WRITE_pusher_fields( const pusher_t * pusher )
+{
+    WRITE32(save_p, pusher->type);
+    WRITE32(save_p, pusher->affectee);
+    WRITE32(save_p, pusher->x_mag);
+    WRITE32(save_p, pusher->y_mag);
+    WRITE32(save_p, pusher->magnitude);
+    WRITE32(save_p, pusher->radius);
+    WRITEFIXED(save_p, pusher->x_src);
+    WRITEFIXED(save_p, pusher->y_src);
+    // source is rebuilt on load from affectee
+}
+
+static
+void  READ_pusher_fields( pusher_t * pusher )
+{
+    pusher->type = READ32(save_p);
+    pusher->affectee = READ32(save_p);
+    pusher->x_mag = READ32(save_p);
+    pusher->y_mag = READ32(save_p);
+    pusher->magnitude = READ32(save_p);
+    pusher->radius = READ32(save_p);
+    pusher->x_src = READFIXED(save_p);
+    pusher->y_src = READFIXED(save_p);
+}
+
+
+// Each sector effect is written as its marker, its fields, and what follows
+// them.  Called for stopped ceiling or active ceiling.
 // Must be consistent, there is one reader for both.
 static
-void  WRITE_ceiling( ceiling_t* ceilp, byte active )
+void  WRITE_ceiling( const ceiling_t * ceilp, byte active )
 {
     WRITEBYTE(save_p, tc_ceiling); // ceiling marker
-    WRITE_SECTOR_THINKER( ceilp, ceiling_t, type );
-    // ceilinglist* does not need to be saved
+    WRITE_ceiling_fields( ceilp );
     WRITEBYTE(save_p, active); // active or stopped ceiling
 }
 
@@ -1854,29 +2195,159 @@ void  WRITE_ceiling( ceiling_t* ceilp, byte active )
 // Called for stopped platform or active platform.
 // Must be consistent, there is one reader for both.
 static
-void  WRITE_plat( plat_t* platp, byte active )
+void  WRITE_plat( const plat_t * platp, byte active )
 {
     WRITEBYTE(save_p, tc_plat);  // platform marker
-#ifdef WRITE_PLAT144
-    // Different Field layout for version 144.
-    plat_144_t  pt;
-    pt.type = platp->type;
-    pt.speed = platp->speed;
-    pt.low = platp->low;
-    pt.high = platp->high;
-    pt.crush = platp->crush;
-    pt.tag = platp->tag;
-    pt.wait = platp->wait;
-    pt.count = platp->count;
-    pt.status = platp->status;
-    pt.oldstatus = platp->oldstatus;
-    WRITE144_SECTOR_THINKER( platp, &pt, plat_144_t, type );
-#else
-    // Version 147
-    WRITE_SECTOR_THINKER( platp, plat_t, type );
-#endif
-    // platlist* does not need to be saved
+    WRITE_plat_fields( platp );
     WRITEBYTE(save_p, active); // active or stopped plat
+}
+
+static
+void  WRITE_door( const vldoor_t * door )
+{
+    WRITEBYTE(save_p, tc_door);  // door marker
+    WRITE_door_fields( door );
+    WRITE_LINE_PTR( door->line );  // can be NULL
+}
+
+static
+void  WRITE_floor( const floormove_t * floormv )
+{
+    WRITEBYTE(save_p, tc_floor);
+    WRITE_floor_fields( floormv );
+}
+
+static
+void  WRITE_flash( const lightflash_t * flash )
+{
+    WRITEBYTE(save_p, tc_flash);
+    WRITE_flash_fields( flash );
+}
+
+static
+void  WRITE_strobe( const strobe_t * strobe )
+{
+    WRITEBYTE(save_p, tc_strobe);
+    WRITE_strobe_fields( strobe );
+}
+
+static
+void  WRITE_glow( const glow_t * glow )
+{
+    WRITEBYTE(save_p, tc_glow);
+    WRITE_glow_fields( glow );
+}
+
+static
+void  WRITE_fireflicker( const fireflicker_t * ff )
+{
+    WRITEBYTE(save_p, tc_fireflicker);
+    WRITE_fireflicker_fields( ff );
+}
+
+static
+void  WRITE_lightfade( const lightfader_t * fade )
+{
+    WRITEBYTE(save_p, tc_lightfade);
+    WRITE_lightfade_fields( fade );
+}
+
+static
+void  WRITE_elevator( const elevator_t * elevator )
+{
+    WRITEBYTE(save_p, tc_elevator);
+    WRITE_elevator_fields( elevator );
+}
+
+static
+void  WRITE_scroll( const scroll_t * scroll )
+{
+    WRITEBYTE(save_p, tc_scroll);
+    WRITE_scroll_fields( scroll );
+}
+
+#ifdef FRICTIONTHINKER
+static
+void  WRITE_friction( const friction_t * friction )
+{
+    // Friction thinkers are obsolete
+    WRITEBYTE(save_p, tc_friction);
+    WRITE_friction_fields( friction );
+}
+#endif
+
+static
+void  WRITE_pusher( const pusher_t * pusher )
+{
+    WRITEBYTE(save_p, tc_pusher);
+    WRITE_pusher_fields( pusher );
+}
+
+
+// Test-only (-testsizes).  Reports, for each sector effect, the number of bytes
+// one record takes in a savegame, and whether a record survives a trip: every
+// byte of the struct is set to a value of its own (not zero), the record is
+// written and read into a zeroed struct, every saved field of which must equal
+// the original (a field cut to a smaller width, or left out of the writing and
+// the reading both, fails here), and written again: the two records must be
+// the same.  The writing and the reading are the ones the savegame
+// uses, so the numbers do not depend on the build, which is the point: native
+// and wasm must print the same.  Sector effects that no demo makes (ceilings,
+// light fades, elevators, friction, pushers, stopped ones) are covered this way.
+// The fields the savegame does not hold (the thinker links, the lists, the
+// pusher's source) are not read by the writing, so their values do not matter,
+// and a door's line is NULL.
+#define EQ(f)  (th.f == th2.f)
+#define SG_TRIP_BODY( name, typ, wcall, rcall, SETUP, SAME ) \
+    {  typ th, th2;  size_t k;  int n, n2;                              \
+       for (k = 0; k < sizeof(th); k++)  ((byte *)&th)[k] = (byte)(k * 37 + 11); \
+       memset( &th2, 0, sizeof(th2) );                                  \
+       SETUP;                                                           \
+       save_p = buf;  wcall;  n = save_p - buf;                        \
+       save_p = buf + 1;  rcall;  /* after the marker */                \
+       { int same = (SAME);  /* the saved fields come back as they were */ \
+       save_p = buf2;  th = th2;  wcall;  n2 = save_p - buf2;           \
+       report( name, n, (same && n == n2 && memcmp( buf, buf2, n ) == 0) ); } }
+
+void P_Savegame_Effect_Sizes( void (*report)( const char * name, int bytes, int roundtrip_ok ) )
+{
+    byte buf[256], buf2[256];
+    byte * saved_p = save_p;
+
+#define SECTOR_SETUP     th.sector = sectors;  th2.sector = sectors
+// (a boolean is written as 0 or 1: crush is set to 1)
+#define NO_SETUP         ((void)0)
+    SG_TRIP_BODY( "ceiling", ceiling_t, WRITE_ceiling( &th, 1 ), READ_ceiling_fields( &th2 ), { SECTOR_SETUP;  th.crush = 1; } ,
+                  EQ(type) && EQ(bottomheight) && EQ(topheight) && EQ(speed) && EQ(oldspeed) && EQ(crush) && EQ(direction) && EQ(olddirection) && EQ(tag) && EQ(new_sec_special) && EQ(old_sec_special) && EQ(new_ceilingpic) );
+    SG_TRIP_BODY( "door", vldoor_t, WRITE_door( &th ),
+                  { READ_door_fields( &th2 );  READ_LINE_PTR( th2.line ); },
+                  { th.sector = sectors;  th2.sector = sectors;  th.line = NULL; } ,
+                  EQ(type) && EQ(topheight) && EQ(speed) && EQ(direction) && EQ(topwait) && EQ(topcountdown) && EQ(lighttag) && EQ(line) );
+    SG_TRIP_BODY( "floor", floormove_t, WRITE_floor( &th ), READ_floor_fields( &th2 ), { SECTOR_SETUP;  th.crush = 1; } ,
+                  EQ(type) && EQ(crush) && EQ(floordestheight) && EQ(speed) && EQ(direction) && EQ(new_sec_special) && EQ(old_sec_special) && EQ(new_floorpic) && EQ(new_floortype) );
+    SG_TRIP_BODY( "plat", plat_t, WRITE_plat( &th, 1 ), READ_plat_fields( &th2 ), { SECTOR_SETUP;  th.crush = 1; } ,
+                  EQ(type) && EQ(speed) && EQ(low) && EQ(high) && EQ(crush) && EQ(tag) && EQ(wait) && EQ(count) && EQ(status) && EQ(oldstatus) );
+    SG_TRIP_BODY( "flash", lightflash_t, WRITE_flash( &th ), READ_flash_fields( &th2 ), SECTOR_SETUP ,
+                  EQ(minlight) && EQ(maxlight) && EQ(mintime) && EQ(maxtime) && EQ(count) );
+    SG_TRIP_BODY( "strobe", strobe_t, WRITE_strobe( &th ), READ_strobe_fields( &th2 ), SECTOR_SETUP ,
+                  EQ(minlight) && EQ(maxlight) && EQ(darktime) && EQ(brighttime) && EQ(count) );
+    SG_TRIP_BODY( "glow", glow_t, WRITE_glow( &th ), READ_glow_fields( &th2 ), SECTOR_SETUP ,
+                  EQ(minlight) && EQ(maxlight) && EQ(direction) );
+    SG_TRIP_BODY( "fireflicker", fireflicker_t, WRITE_fireflicker( &th ), READ_fireflicker_fields( &th2 ), SECTOR_SETUP ,
+                  EQ(minlight) && EQ(maxlight) && EQ(count) );
+    SG_TRIP_BODY( "lightfade", lightfader_t, WRITE_lightfade( &th ), READ_lightfade_fields( &th2 ), SECTOR_SETUP ,
+                  EQ(destlight) && EQ(speed) );
+    SG_TRIP_BODY( "elevator", elevator_t, WRITE_elevator( &th ), READ_elevator_fields( &th2 ), SECTOR_SETUP ,
+                  EQ(type) && EQ(direction) && EQ(floordestheight) && EQ(ceilingdestheight) && EQ(speed) );
+    SG_TRIP_BODY( "scroll", scroll_t, WRITE_scroll( &th ), READ_scroll_fields( &th2 ), NO_SETUP ,
+                  EQ(type) && EQ(affectee) && EQ(control) && EQ(accel) && EQ(dx) && EQ(dy) && EQ(last_height) && EQ(vdx) && EQ(vdy) );
+#ifdef FRICTIONTHINKER
+    SG_TRIP_BODY( "friction", friction_t, WRITE_friction( &th ), READ_friction_fields( &th2 ), NO_SETUP ,
+                  EQ(affectee) && EQ(friction) && EQ(movefactor) );
+#endif
+    SG_TRIP_BODY( "pusher", pusher_t, WRITE_pusher( &th ), READ_pusher_fields( &th2 ), NO_SETUP ,
+                  EQ(type) && EQ(affectee) && EQ(x_mag) && EQ(y_mag) && EQ(magnitude) && EQ(radius) && EQ(x_src) && EQ(y_src) );
+    save_p = saved_p;
 }
 
 static inline
@@ -2050,6 +2521,7 @@ void P_ArchiveThinkers(void)
             WRITE_MobjPointerID(save_p, mobj);
             WRITEFIXED(save_p, mobj->z);        // Force this so 3dfloor problems don't arise. SSNTails 03-17-2002
             WRITEFIXED(save_p, mobj->floorz);
+            WRITEFIXED(save_p, mobj->ceilingz);  // portable layout, it can be stale
 
             if (diff1 & MD_SPAWNPOINT)
                 WRITE_MAPTHING_PTR( mobj->spawnpoint );
@@ -2202,137 +2674,63 @@ void P_ArchiveThinkers(void)
         }
         else if (th->function == TFI_VerticalDoor)
         {
-            WRITEBYTE(save_p, tc_door);  // door marker
-            vldoor_t *door = (vldoor_t *)th;
-#ifdef WRITE_LF_VER_144
-            // Field layout is identical, just missing lighttag.
-            vldoor_144_t  vld;
-            memcpy( &vld.type, &door->type, sizeof(vld));
-            WRITE144_SECTOR_THINKER( door, &vld, vldoor_144_t, type );
-#else
-            WRITE_SECTOR_THINKER( door, vldoor_t, type );
-#endif
-            WRITE_LINE_PTR( door->line );  // can be NULL
+            WRITE_door( (vldoor_t *)th );
             continue;
         }
         else if (th->function == TFI_MoveFloor)
         {
-            WRITEBYTE(save_p, tc_floor);  // floor marker
-            floormove_t *floormv = (floormove_t *)th;
-            WRITE_SECTOR_THINKER( floormv, floormove_t, type );
+            WRITE_floor( (floormove_t *)th );
             continue;
         }
         else if (th->function == TFI_LightFlash)
         {
-            WRITEBYTE(save_p, tc_flash);
-            lightflash_t *flash = (lightflash_t *)th;
-#ifdef WRITE_LF_VER_144
-            lightflash_144_t  lf;
-            lf.count = flash->count;
-            lf.minlight = flash->minlight;
-            lf.maxlight = flash->maxlight;
-            lf.maxtime = flash->maxtime;
-            lf.mintime = flash->mintime;
-            WRITE144_SECTOR_THINKER( flash, &lf, lightflash_144_t, count );
-#else
-            WRITE_SECTOR_THINKER( flash, lightflash_t, minlight );
-#endif
+            WRITE_flash( (lightflash_t *)th );
             continue;
         }
         else if (th->function == TFI_StrobeFlash)
         {
-            WRITEBYTE(save_p, tc_strobe);
-            strobe_t *strobe = (strobe_t *)th;
-#ifdef WRITE_LF_VER_144
-            strobe_144_t  st;
-            st.count = strobe->count;
-            st.minlight = strobe->minlight;
-            st.maxlight = strobe->maxlight;
-            st.darktime = strobe->darktime;
-            st.brighttime = strobe->brighttime;
-            WRITE144_SECTOR_THINKER( strobe, &st, strobe_144_t, count );
-#else
-            WRITE_SECTOR_THINKER( strobe, strobe_t, minlight );
-#endif
+            WRITE_strobe( (strobe_t *)th );
             continue;
         }
         else if (th->function == TFI_Glow)
         {
-            WRITEBYTE(save_p, tc_glow);
-            glow_t *glow = (glow_t *)th;
-#ifdef WRITE_LF_VER_144
-            glow_144_t  gl;
-            gl.minlight = glow->minlight;
-            gl.maxlight = glow->maxlight;
-            gl.direction = glow->direction;
-            WRITE144_SECTOR_THINKER( glow, &gl, glow_144_t, minlight );
-#else
-            WRITE_SECTOR_THINKER( glow, glow_t, minlight );
-#endif
+            WRITE_glow( (glow_t *)th );
             continue;
         }
         else
             // BP added T_FireFlicker
         if (th->function == TFI_FireFlicker)
         {
-            WRITEBYTE(save_p, tc_fireflicker);
-            fireflicker_t *fireflicker = (fireflicker_t *)th;
-#ifdef WRITE_LF_VER_144
-            fireflicker_144_t  ff;
-            ff.count = fireflicker->count;
-            ff.minlight = fireflicker->minlight;
-            ff.maxlight = fireflicker->maxlight;
-            WRITE144_SECTOR_THINKER( fireflicker, &ff, fireflicker_144_t, count );
-#else
-            WRITE_SECTOR_THINKER( fireflicker, fireflicker_t, minlight );
-#endif
+            WRITE_fireflicker( (fireflicker_t *)th );
             continue;
         }
         else if (th->function == TFI_LightFade)
         {
-            WRITEBYTE(save_p, tc_lightfade);
-            lightfader_t *fade = (lightfader_t *)th;
-#ifdef WRITE_LF_VER_144
-            lightfader_144_t  lf;
-            lf.destlevel = fade->destlight;
-            lf.speed = fade->speed;
-            WRITE144_SECTOR_THINKER( fade, &lf, lightfader_144_t, destlevel );
-#else
-            WRITE_SECTOR_THINKER( fade, lightfader_t, destlight );
-#endif
+            WRITE_lightfade( (lightfader_t *)th );
             continue;
         }
         else
             //SoM: 3/15/2000: Added extra Boom thinker types.
         if (th->function == TFI_MoveElevator)
         {
-            WRITEBYTE(save_p, tc_elevator);
-            elevator_t *elevator = (elevator_t *)th;
-            WRITE_SECTOR_THINKER( elevator, elevator_t, type );
+            WRITE_elevator( (elevator_t *)th );
             continue;
         }
         else if (th->function == TFI_Scroll)
         {
-            WRITEBYTE(save_p, tc_scroll);
-            scroll_t *scroll = (scroll_t *)th;
-            WRITE_THINKER( scroll, scroll_t, type );
+            WRITE_scroll( (scroll_t *)th );
             continue;
         }
 #ifdef FRICTIONTHINKER
         else if (th->function == TFI_Friction)
         {
-            // Friction thinkers are obsolete
-            WRITEBYTE(save_p, tc_friction);
-            friction_t *friction = (friction_t *)th;
-            WRITE_THINKER( friction, friction_t, affectee );
+            WRITE_friction( (friction_t *)th );
             continue;
         }
 #endif       
         else if (th->function == TFI_Pusher)
         {
-            WRITEBYTE(save_p, tc_pusher);
-            pusher_t *pusher = (pusher_t *)th;
-            WRITE_THINKER( pusher, pusher_t, type );
+            WRITE_pusher( (pusher_t *)th );
             continue;
         }
 #ifdef PARANOIA
@@ -2424,6 +2822,8 @@ void P_UnArchiveThinkers(void)
 
                 mobj->z = READFIXED(save_p);    // Force this so 3dfloor problems don't arise. SSNTails 03-17-2002
                 mobj->floorz = READFIXED(save_p);
+                if( sg_portable )
+                    mobj->ceilingz = READFIXED(save_p);
 
                 // [WDJ] Keep all combinations of MD_SPAWNPOINT and MD_TYPE,
                 // so can read older savegames made with different invariants.
@@ -2618,6 +3018,13 @@ void P_UnArchiveThinkers(void)
                     READ32(save_p);
 #endif
                 }
+#ifdef MOBJ_HAS_FLAGS3
+                else
+                {
+                    // Not saved when it is the one of the type.
+                    mobj->flags3 = mobj->info->flags3;
+                }
+#endif
 
 #ifdef MONSTER_VARY
                 if( diff2 & MD2_monster_vary )
@@ -2625,12 +3032,20 @@ void P_UnArchiveThinkers(void)
                     mobj->vary_index = READBYTE(save_p);
                 }
                 // must be after radius, height, speed
-                mobj_varied( mobj );  // assigns fields from info even when not varied
+                {
+                    // mobj_varied assigns radius and height from info, even
+                    // when not varied, and would undo a saved radius or
+                    // height (a corpse is lower and slimmer).
+                    fixed_t  rad = mobj->radius, ht = mobj->height;
+                    mobj_varied( mobj );  // assigns fields from info even when not varied
+                    if (diff1 & MD_RADIUS)  mobj->radius = rad;
+                    if (diff1 & MD_HEIGHT)  mobj->height = ht;
+                }
 #endif
 #endif
 
                 // [WDJ] Fix old savegames for corpse health < 0.
-                if((mobj->flags & MF_CORPSE) && (mobj->health >= 0))
+                if((mobj->flags & MF_CORPSE) && (mobj->health > 0))
                 {
                     mobj->health = -mobj->health - (mobj->info->spawnhealth/2);
                 }
@@ -2670,7 +3085,8 @@ void P_UnArchiveThinkers(void)
                     mobj->player->viewz = mobj->player->mo->z + mobj->player->viewheight;
                     //debug_Printf("P_UnArchiveThinkers: viewz = %f\n",FIXED_TO_FLOAT(mobj->player->viewz));
                 }
-                mobj->ceilingz = mobj->subsector->sector->ceilingheight;
+                if( ! sg_portable )
+                    mobj->ceilingz = mobj->subsector->sector->ceilingheight;
                 mobj->thinker.function = TFI_MobjThinker;
                 P_AddThinker(&mobj->thinker);
                 break;
@@ -2678,7 +3094,15 @@ void P_UnArchiveThinkers(void)
             case tc_ceiling:
               {
                 ceiling_t *ceiling = Z_Malloc(sizeof(*ceiling), PU_LEVEL, NULL);
-                READ_SECTOR_THINKER( ceiling, ceiling_t, type );
+                if( sg_portable )
+                {
+                    READ_ceiling_fields( ceiling );
+                    P_AddThinker(&ceiling->thinker);
+                }
+                else
+                {
+                    READ_SECTOR_THINKER( ceiling, ceiling_t, type );
+                }
                 ceiling->sector->ceilingdata = ceiling;
                 byte moving = READBYTE(save_p); // moving ceiling?
                 ceiling->thinker.function = moving ? TFI_MoveCeiling : AI_NULL;
@@ -2689,6 +3113,12 @@ void P_UnArchiveThinkers(void)
             case tc_door:
               {
                 vldoor_t *door = Z_Malloc(sizeof(*door), PU_LEVEL, NULL);
+                if( sg_portable )
+                {
+                    READ_door_fields( door );
+                    P_AddThinker(&door->thinker);
+                }
+                else
 #ifdef READ_LF_VER_144
                 if( sg_version < 147 )
                 {
@@ -2713,7 +3143,15 @@ void P_UnArchiveThinkers(void)
             case tc_floor:
               {
                 floormove_t *floormv = Z_Malloc(sizeof(*floormv), PU_LEVEL, NULL);
-                READ_SECTOR_THINKER( floormv, floormove_t, type );
+                if( sg_portable )
+                {
+                    READ_floor_fields( floormv );
+                    P_AddThinker(&floormv->thinker);
+                }
+                else
+                {
+                    READ_SECTOR_THINKER( floormv, floormove_t, type );
+                }
                 floormv->sector->floordata = floormv;
                 floormv->thinker.function = TFI_MoveFloor;
               }
@@ -2722,6 +3160,12 @@ void P_UnArchiveThinkers(void)
             case tc_plat:
               {
                 plat_t *plat = Z_Malloc(sizeof(*plat), PU_LEVEL, NULL);
+                if( sg_portable )
+                {
+                    READ_plat_fields( plat );
+                    P_AddThinker(&plat->thinker);
+                }
+                else
 #ifdef READ_PLAT144
                 if( sg_version < READ_PLAT144 )
                 {
@@ -2753,6 +3197,12 @@ void P_UnArchiveThinkers(void)
             case tc_flash:
               {
                 lightflash_t *flash = Z_Malloc(sizeof(*flash), PU_LEVEL, NULL);
+                if( sg_portable )
+                {
+                    READ_flash_fields( flash );
+                    P_AddThinker(&flash->thinker);
+                }
+                else
 #ifdef READ_LF_VER_144
                 if( sg_version < 147 )
                 {
@@ -2776,6 +3226,12 @@ void P_UnArchiveThinkers(void)
             case tc_strobe:
               {
                 strobe_t *strobe = Z_Malloc(sizeof(*strobe), PU_LEVEL, NULL);
+                if( sg_portable )
+                {
+                    READ_strobe_fields( strobe );
+                    P_AddThinker(&strobe->thinker);
+                }
+                else
 #ifdef READ_LF_VER_144
                 if( sg_version < 147 )
                 {
@@ -2799,6 +3255,12 @@ void P_UnArchiveThinkers(void)
             case tc_glow:
               {
                 glow_t *glow = Z_Malloc(sizeof(*glow), PU_LEVEL, NULL);
+                if( sg_portable )
+                {
+                    READ_glow_fields( glow );
+                    P_AddThinker(&glow->thinker);
+                }
+                else
 #ifdef READ_LF_VER_144
                 if( sg_version < 147 )
                 {
@@ -2820,6 +3282,12 @@ void P_UnArchiveThinkers(void)
             case tc_fireflicker:
               {
                 fireflicker_t *fireflicker = Z_Malloc(sizeof(*fireflicker), PU_LEVEL, NULL);
+                if( sg_portable )
+                {
+                    READ_fireflicker_fields( fireflicker );
+                    P_AddThinker(&fireflicker->thinker);
+                }
+                else
 #ifdef READ_LF_VER_144
                 if( sg_version < 147 )
                 {
@@ -2841,6 +3309,12 @@ void P_UnArchiveThinkers(void)
             case tc_lightfade:
               {
                 lightfader_t *fade = Z_Malloc(sizeof(*fade), PU_LEVEL, NULL);
+                if( sg_portable )
+                {
+                    READ_lightfade_fields( fade );
+                    P_AddThinker(&fade->thinker);
+                }
+                else
 #ifdef READ_LF_VER_144
                 if( sg_version < 147 )
                 {
@@ -2861,7 +3335,15 @@ void P_UnArchiveThinkers(void)
             case tc_elevator:
               {
                 elevator_t *elevator = Z_Malloc(sizeof(elevator_t), PU_LEVEL, NULL);
-                READ_SECTOR_THINKER( elevator, elevator_t, type );
+                if( sg_portable )
+                {
+                    READ_elevator_fields( elevator );
+                    P_AddThinker(&elevator->thinker);
+                }
+                else
+                {
+                    READ_SECTOR_THINKER( elevator, elevator_t, type );
+                }
                 elevator->sector->floordata = elevator; //jff 2/22/98
                 elevator->sector->ceilingdata = elevator;       //jff 2/22/98
                 elevator->thinker.function = TFI_MoveElevator;
@@ -2871,7 +3353,15 @@ void P_UnArchiveThinkers(void)
             case tc_scroll:
               {
                 scroll_t *scroll = Z_Malloc(sizeof(scroll_t), PU_LEVEL, NULL);
-                READ_THINKER( scroll, scroll_t, type );
+                if( sg_portable )
+                {
+                    READ_scroll_fields( scroll );
+                    P_AddThinker(&scroll->thinker);
+                }
+                else
+                {
+                    READ_THINKER( scroll, scroll_t, type );
+                }
                 scroll->thinker.function = TFI_Scroll;
               }
               break;
@@ -2881,11 +3371,19 @@ void P_UnArchiveThinkers(void)
 #ifdef FRICTIONTHINKER
                  // friction thinkers are obsolete
                 friction_t *friction = Z_Malloc(sizeof(friction_t), PU_LEVEL, NULL);
-                READ_THINKER( friction, friction_t, affectee );
+                if( sg_portable )
+                {
+                    READ_friction_fields( friction );
+                    P_AddThinker(&friction->thinker);
+                }
+                else
+                {
+                    READ_THINKER( friction, friction_t, affectee );
+                }
                 friction->thinker.function = TFI_Friction;
 #else
                 // skip, to handle old savegames
-                save_p += sizeof(thinker_t);
+                save_p += (sg_portable)? 3 * sizeof(int32_t) : sizeof(thinker_t);
 #endif
               }
               break;
@@ -2893,7 +3391,15 @@ void P_UnArchiveThinkers(void)
             case tc_pusher:
               {
                 pusher_t *pusher = Z_Malloc(sizeof(pusher_t), PU_LEVEL, NULL);
-                READ_THINKER( pusher, pusher_t, type );
+                if( sg_portable )
+                {
+                    READ_pusher_fields( pusher );
+                    P_AddThinker(&pusher->thinker);
+                }
+                else
+                {
+                    READ_THINKER( pusher, pusher_t, type );
+                }
                 pusher->source = P_GetPushThing(pusher->affectee);
                 pusher->thinker.function = TFI_Pusher;
               }
@@ -2971,6 +3477,75 @@ void P_UnArchiveSpecials(void)
         SG_Readbuf();
         itemrespawnque[iquehead] = &mapthings[i];
         itemrespawntime[iquehead++] = READ32(save_p);
+    }
+}
+
+// The sector soundtarget: the mobj that last made a noise that reached the
+// sector (P_RecursiveSound), which A_Look reads to wake a monster that cannot
+// see the player.  The mobj ids exist only after the thinkers have been
+// read, so this is a section of its own, after the specials.  Optional: it is
+// there when some sector has one.  A soundtarget that is not a mobj of the
+// level any more (nothing keeps it alive) is not saved.
+
+// Only a mobj that P_ArchiveThinkers saved has an id the loader knows.
+static
+boolean  SG_is_saved_mobj( const mobj_t * mo )
+{
+    const thinker_t * th;
+    for (th = thinkercap.next; th != &thinkercap; th = th->next)
+    {
+        if( th == (const thinker_t *) mo )
+            return (th->function == TFI_MobjThinker);
+    }
+    return false;
+}
+
+static
+boolean  SG_soundtarget_detect( void )
+{
+    uint32_t i;
+    for (i = 0; i < numsectors; i++)
+    {
+        if( sectors[i].soundtarget && SG_is_saved_mobj( sectors[i].soundtarget ) )
+            return true;
+    }
+    return false;
+}
+
+static
+void  P_Archive_Soundtargets( void )
+{
+    uint32_t i;
+    for (i = 0; i < numsectors; i++)
+    {
+        mobj_t * mo = sectors[i].soundtarget;
+        if( mo && SG_is_saved_mobj( mo ) )
+        {
+            WRITE32(save_p, i);  // sector index
+            WRITE_MobjPointerID(save_p, mo);
+            SG_Writebuf();
+        }
+    }
+    WRITE32(save_p, 0xffffffff);  // end delimiter
+}
+
+static
+void  P_UnArchive_Soundtargets( void )
+{
+    uint32_t i;
+    SG_Readbuf();
+    while ((i = READ32(save_p)) != 0xffffffff)
+    {
+        mobj_t * mo = READ_MobjPointerID(save_p);
+        if( i >= numsectors )
+        {
+            I_SoftError( "LoadGame: soundtarget of a sector that does not exist.\n" );
+            save_game_abort = 1;
+            return;
+        }
+        SET_TARGET_REF( sectors[i].soundtarget, mo );
+        SG_Readbuf();
+        if( save_game_abort )  return;
     }
 }
 
@@ -3903,7 +4478,7 @@ void P_Savegame_Write_header( const char * description, byte write_netgame )
 
     // binary header data
     // 16 bit game version that wrote file
-    WRITE16( save_p, DL_VERSION );  // savegame version
+    WRITE16( save_p, SG_PORTABLE_BASE + DL_VERSION );  // savegame version
     WRITEBYTE( save_p, sg_big_endian );
     WRITEBYTE( save_p, sg_padded );
     WRITEBYTE( save_p, sizeof(int) );	// word size
@@ -3988,8 +4563,16 @@ boolean P_Savegame_Read_header( savegame_info_t * infop, byte read_netgame )
     // binary header data
     reason = "version";
     sg_version = READ16( save_p );  // savegame version
+    sg_portable = ( sg_version >= SG_PORTABLE_BASE );
+    if( sg_portable )  sg_version -= SG_PORTABLE_BASE;
     if( sg_version < MIN_READSAVE_VERSION )  goto wrong;
     if( sg_version > MAX_READSAVE_VERSION )  goto wrong;
+    // Nothing writes the portable layout with another version than this one.
+    if( sg_portable && sg_version != DL_VERSION )  goto wrong;
+    // A savegame of the old layout holds raw memory of the machine that
+    // wrote it. It can only be read by the same kind of machine, which
+    // a game that is joined cannot know.
+    if( read_netgame && ! sg_portable )  goto old_layout;
     reason = "endian";
     if( READBYTE( save_p ) != sg_big_endian )  goto wrong;
     reason = "padding";
@@ -4010,6 +4593,10 @@ boolean P_Savegame_Read_header( savegame_info_t * infop, byte read_netgame )
 
  wrong:
    snprintf( infop->msg, 60, "Invalid savegame: wrong %s\n", reason );
+   goto failed;
+
+ old_layout:
+   snprintf( infop->msg, sizeof(infop->msg), "Invalid savegame: the server's savegame is not the portable layout (an older or upstream build)\n" );
    goto failed;
 
  failed:
@@ -4047,6 +4634,12 @@ void P_Savegame_Save_game( void )
     P_ArchiveThinkers();
     SG_SaveSync( SYNC_specials );
     P_ArchiveSpecials();
+    // Optional soundtarget section, when some sector has one.
+    if( SG_soundtarget_detect() )
+    {
+        SG_SaveSync( SYNC_soundtarget );
+        P_Archive_Soundtargets();
+    }
 #ifdef FRAGGLESCRIPT
     // Only save fragglescript if the level uses it.
     if( SG_fragglescript_detect() )
@@ -4105,6 +4698,11 @@ boolean P_Savegame_Load_game(void)
     P_UnArchiveThinkers();
     if( ! SG_ReadSync( SYNC_specials, 0 ) )  goto sync_err;
     P_UnArchiveSpecials();
+    // Optional soundtarget section
+    if( SG_ReadSync( SYNC_soundtarget, 1 ) )
+    {
+        P_UnArchive_Soundtargets();
+    }
     // Optional fragglescript section
     if( SG_ReadSync( SYNC_fragglescript, 1 ) )
 #ifdef FRAGGLESCRIPT

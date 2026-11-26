@@ -81,7 +81,7 @@ Client side `CL_ConnectToServer` (`d_clisrv.c:3110-3381`, a blocking loop on `cl
 
 Server side `client_join_handler` (`d_clisrv.c:4467`):
 4. Refuses on a version or `NETWORK_VERSION` mismatch (`:4474`), `sv_allownewplayers 0`, or `cv_maxplayers` (`:4485-4502`).
-5. If the server is in `GS_LEVEL` and both sides allow it (`cv_download_savegame`, `cv_SV_download_savegame`, both default 1), the command is `CTRL_download_savegame`; otherwise `CTRL_wait_game_start` (the player waits for the next level). A big-endian/little-endian mismatch forces the wait (`:4510-4531`). **Nothing compares pointer sizes** (§8).
+5. If the server is in `GS_LEVEL` and both sides allow it (`cv_download_savegame`, `cv_SV_download_savegame`, both default 1), the command is `CTRL_download_savegame`; otherwise `CTRL_wait_game_start` (the player waits for the next level). A big-endian/little-endian mismatch forces the wait (`:4510-4531`). **Nothing compared pointer sizes before F2**; now the savegame's version says which layout it has, and a client refuses an old one (§8).
 6. `SV_AddNode`, then `SV_Send_ServerConfig` (`:1407`): `PT_SERVERCFG` with the game's settings, the gametic, the players and their positions, and the command.
 7. For `CTRL_download_savegame`: node state `NOS_join_savegame`, `SV_Send_SaveGame` (`:2379`): `SV_network_wait_timer(90)` (the game is **paused** for the download, 90 s at most), then `P_Savegame_Write_header` and `P_Savegame_Save_game` into a buffer and `SV_SendData(to_node, "SAVEGAME", ...)` (`d_netfil.c`), which sends it as file fragments (`PT_FILEFRAGMENT`) on the ordinary reliable channel. The client's player is then added to `join_waiting` (`SV_Add_Join_Waiting`, `:4243`).
 
@@ -139,27 +139,57 @@ Which of these the demos reach: `FixedDiv2` (all of them) and nothing else from 
 
 ## 8. Savegame portability (the hot-join payload)
 
-**Not portable between a 64-bit native build and wasm32.** The savegame code writes some structures as raw memory, and their sizes differ.
+**Portable since F2** (`bugs.md` L19 and L30 fixed). Savegames written before F2 are not, and are still read, on the kind of machine that wrote them. What the code did before is at the end of this section.
 
-- The header records `sizeof(int)` and `sizeof(boolean)` and the loader checks them (`p_saveg.c:3909-3910`, `:3998-4000`): both 4 on both builds. It does not record the size of a pointer or the endian of the data beyond `NF_big_endian` in the join.
-- **Sector effects** (ceilings, doors, floors, platforms, lights, elevators, scrollers, pushers) are written with `WRITE_SECTOR_THINKER(th, type, field)`: the raw bytes from `offsetof(type, field)` to `sizeof(*th)` (`p_saveg.c:1801-1840`, uses at `:2180-2340`, reads at `:2680-2900`). The thinker header and the `sector_t *` are skipped, but the fields after them are copied as the compiler laid them out, up to the end of the struct, **including the structure's tail padding**, which depends on the alignment of the whole struct (8 on x86_64 because of the pointers, 4 on wasm32). `ceiling_t` also has a pointer (`list`) that is inside the written range for some of them.
-- Measured with `gcc -m64` against `emcc` (`wasm32`), bytes written per record:
+**The format.**
+- **Version.** The header's 16-bit version is `SG_PORTABLE_BASE + 149` = **10149** (`p_saveg.c`, `P_Savegame_Write_header`). The base, 10000, is far above any version number upstream uses (144 to 149 so far), so a number of upstream's can never be taken for it. The reader (`P_Savegame_Read_header`) subtracts the base when it is there: `sg_version` is 149 as before, and `sg_portable` says the sector effects are in the portable layout. Without the base it is an old savegame: the raw layout, read as before.
+- **Mismatched builds.** The join compared the game version and `NETWORK_VERSION` only; nothing about the savegame. Now: a build from before F2 reads 10149 as above its `MAX_READSAVE_VERSION` and says "Invalid savegame: wrong version"; a new build refuses a savegame of the old layout when a server sends it (`read_netgame`): "Invalid savegame: the server's savegame is not the portable layout (an older or upstream build)" (an unmodified upstream server produces the same message). A portable version other than 10149 (10144 to 10148: nothing writes them) is "wrong version". Either way the client prints "Can't load the level !!!" with that line, sends `PT_CLIENTQUIT` and goes back to searching; nothing is loaded. (An old savegame file, with the header of a savegame file, still loads.) `tests/savegame-old.sh` joins the two builds both ways.
+- **The sector effects** are written field by field, in the order of the struct, at fixed widths: a `boolean` or `int8_t` one byte, an enum or `int` or `fixed_t` 32 bits, a `short` or `lightlev_t` or `uint16_t` 16 bits, little-endian as `WRITE16`/`WRITE32` do. No padding, no pointer. The sector is its index (`WRITE_SECTOR_PTR`), a door's line its index or 0xFFFFFFFF. Bytes one record takes, with its marker byte (`tc_*`) and the byte after it where there is one (`-testsizes` prints these on every build):
 
-  | Type | x86_64 | wasm32 |
+  | Type | Bytes | Fields after the marker |
   |---|---|---|
-  | `ceiling_t` | 40 | 36 |
-  | `vldoor_t` | 32 | 28 |
-  | `floormove_t` | 32 | 28 |
-  | `plat_t` | 40 | 40 |
-  | `lightflash_t`, `strobe_t` | 16 | 16 |
-  | `glow_t`, `fireflicker_t` | 8 | 8 |
-  | `lightfader_t` | 8 | 4 |
-  | `elevator_t` | 24 | 20 |
+  | ceiling (`tc_ceiling`), moving or stopped | 37 | sector 4, type 4, bottomheight 4, topheight 4, speed 4, oldspeed 4, crush 1, direction 1, olddirection 1, tag 2, new_sec_special 2, old_sec_special 2, new_ceilingpic 2, then 1: active |
+  | door (`tc_door`) | 35 | sector 4, type 4, topheight 4, speed 4, direction 4, topwait 4, topcountdown 4, lighttag 2, line 4 |
+  | floor (`tc_floor`) | 27 | sector 4, type 4, crush 1, floordestheight 4, speed 4, direction 1, new_sec_special 2, old_sec_special 2, new_floorpic 2, new_floortype 2 |
+  | plat (`tc_plat`), moving or stopped | 41 | sector 4, type 4, speed 4, low 4, high 4, crush 1, tag 2, wait 4, count 4, status 4, oldstatus 4, then 1: active |
+  | lightflash | 21 | sector 4, minlight 2, maxlight 2, mintime 4, maxtime 4, count 4 |
+  | strobe | 21 | sector 4, minlight 2, maxlight 2, darktime 4, brighttime 4, count 4 |
+  | glow | 10 | sector 4, minlight 2, maxlight 2, direction 1 |
+  | fireflicker | 13 | sector 4, minlight 2, maxlight 2, count 4 |
+  | lightfade | 9 | sector 4, destlight 2, speed 2 |
+  | elevator | 22 | sector 4, type 4, direction 1, floordestheight 4, ceilingdestheight 4, speed 4 |
+  | scroll | 37 | type 4, affectee 4, control 4, accel 4, dx 4, dy 4, last_height 4, vdx 4, vdy 4 |
+  | friction | 13 | affectee 4, friction 4, movefactor 4 |
+  | pusher | 33 | type 4, affectee 4, x_mag 4, y_mag 4, magnitude 4, radius 4, x_src 4, y_src 4 (the source mobj is made again from `affectee`) |
 
-  (`sizeof(void *)` 8/4, `sizeof(thinker_t)` 40/20, `sizeof(mobj_t)` 312/224, `sizeof(player_t)` 496/436.) A native server's savegame therefore has the wrong number of bytes for a wasm client at the first door, ceiling, floor or lift thinker: the rest of the stream is read shifted. **A browser joining a native host with a level in progress would corrupt its game, or fail to load.** A browser host and browser clients are fine (same layout); two native 64-bit machines are fine. Brief 04 needs a fix; see `bugs.md` L19.
-- Mobjs, players and sectors are written field by field with `WRITE32`/`WRITEU32` etc. (`p_saveg.c`, the `WRITE_MobjPointerID` and `WRITE_SECTOR_PTR` macros at `:1464-1474`): pointers become indices, so those parts are portable. `inventory_t` (2 bytes) and `memcpy` of bytes are the same on both. `mobj_t` itself is not copied raw.
-- Endianness: everything is written in the machine's own byte order (`LE_SWAP*` only on big-endian machines reading), and the join refuses a big-endian/little-endian pair (`d_clisrv.c:4486-4496`). x86_64 and wasm are both little-endian.
-- `long`: used for sizes in a few `CheckSaveGame(sizeof(long))` comments and the FraggleScript parts (`p_saveg.c:3325`); not in the data of the first levels.
+- **Other things the portable layout carries that the old one lost** (each a loss the check "state as loaded equals state as saved" found, `bugs.md` L36 to L40): the mobj's `ceilingz` (after `floorz`; the old loader made it from the sector, and it is stale after a door moved); the player's `viewheight` and `deltaviewheight` (after the inventory; a player who has just landed); and the sector's **`soundtarget`**, in an optional section of its own (`SYNC_soundtarget`, 240: upstream's optional sections are 70 to 72 and 200, 201, so this stays clear of the numbers it hands out next) after the specials: pairs of sector index and mobj id, closed by 0xFFFFFFFF, written when some sector has one. A soundtarget that is not a mobj the savegame holds (nothing keeps it alive: no reference counting) is left out. Cost: `SG_is_saved_mobj` walks the thinker list for each sector with a soundtarget, in `SG_soundtarget_detect` and again when writing, so a save is O(sectors with a soundtarget x thinkers) twice: about 300 x 600 here, nothing measurable; `mobj_ptrmap` cannot answer it, as it also holds the targets that are not saved mobjs. The loader also keeps a saved `radius` and `height` against `mobj_varied` (a corpse), reads `flags3` as the type's when it was not saved, and leaves a corpse's health of 0 alone.
+- **What a repair sends.** A repair is either `SV_Send_player_repair` (the players' positions and a few fields, no sector state, and no `soundtarget` in it) or, for `RQ_SUG_SAVEGAME`/`RQ_REQ_SAVEGAME`, `SV_Send_SaveGame`: the same savegame as the join (`d_clisrv.c:2785-2795`), so it now holds the `soundtarget`.
+- **What the format still does not hold** (`bugs.md` L25): the view bobbing. Everything in the state hash (§11) is in a savegame now, bots excepted (L23); `tests/savegame-portable.sh` shows it for 12 saves.
+- **Header and the rest.** The header records `sizeof(int)` and `sizeof(boolean)` (4 and 4 on both builds) and the loader checks them; the endian of the data is `NF_big_endian` in the join (a mismatch makes the client wait for the next level, `d_clisrv.c:4510`). Mobjs, players, sectors, lines, sides, the item respawn queue and FraggleScript were always written field by field (pointers as indices, `WRITE_MobjPointerID`, `WRITE_SECTOR_PTR`).
+- **The audit** (every `WRITEMEM`, `READMEM`, `memcpy`, `sizeof` and raw macro in `p_saveg.c`'s write and read paths, F2):
+  - `WRITE_SECTOR_THINKER` (ten uses: ceilings, plats, doors, floors, lightflash, strobe, glow, fireflicker, lightfade, elevator) and `WRITE_THINKER` (scroll, friction, pusher): raw memory from a field to the end of the struct. **Now** `WRITE_<type>_fields`, one function per type; the macros are gone, `READ_SECTOR_THINKER`/`READ_THINKER`/`READ144_SECTOR_THINKER` stay for reading old savegames.
+  - `WRITE144_SECTOR_THINKER` (seven uses) and `memcpy( &vld.type, &door->type, sizeof(vld) )` in the writers: behind `WRITE_LF_VER_144` and `WRITE_PLAT144`, which nothing defines. **Removed** (dead).
+  - The `#if 0` block with `SAVE_SE`, `LOAD_SE` and a one-argument `WRITE_THINKER`: dead, left as it was.
+  - `WRITEMEM`/`READMEM` of `inventory_t` (two bytes, no padding, the same on both): **now** `WRITEBYTE` of `type` and `count`; the same bytes.
+  - `memcpy` of the 8-byte flat names in `P_ArchiveWorld`: fixed size, left.
+  - `save_p += sizeof(thinker_t)` for an obsolete friction thinker (reads, dead: `FRICTIONTHINKER` is defined): **now** 12 bytes in the portable layout; the old layout keeps its own.
+  - `sizeof(int)` and `sizeof(boolean)` header bytes: left (see above). `Z_Malloc(sizeof(...))` calls: allocation only. `sizeof(long)`: comments only.
+  - `WRITE16( botp->flags )`, `P_ArchiveSValue`, the netvars (`CV_SaveNetVars`: ids and strings): fixed width already.
+
+**Before F2** (kept for the record): the header recorded `sizeof(int)` and `sizeof(boolean)` and checked them (`p_saveg.c`, `P_Savegame_Read_header`), but not the size of a pointer. The sector effects were written with `WRITE_SECTOR_THINKER(th, type, field)`: the raw bytes from `offsetof(type, field)` to `sizeof(*th)`, which include the structure's tail padding (depends on the alignment of the whole struct, 8 on x86_64 because of the pointers, 4 on wasm32). Bytes written per record, measured with `gcc -m64` against `emcc`:
+
+| Type | x86_64 | wasm32 |
+|---|---|---|
+| `ceiling_t` | 40 | 36 |
+| `vldoor_t` | 32 | 28 |
+| `floormove_t` | 32 | 28 |
+| `plat_t` | 40 | 40 |
+| `lightflash_t`, `strobe_t` | 16 | 16 |
+| `glow_t`, `fireflicker_t` | 8 | 8 |
+| `lightfader_t` | 8 | 4 |
+| `elevator_t` | 24 | 20 |
+
+(`sizeof(void *)` 8/4, `sizeof(thinker_t)` 40/20, `sizeof(mobj_t)` 312/224, `sizeof(player_t)` 496/436.) A native server's savegame had the wrong number of bytes for a wasm client at the first door, ceiling, floor or lift thinker, and the rest of the stream was read shifted: a browser joining a native host with a level in progress would have corrupted its game or failed to load. `long` was used only in comments and the FraggleScript parts.
 
 ## 9. Files: WAD search and config
 

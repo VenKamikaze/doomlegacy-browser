@@ -148,9 +148,11 @@ All run from the repository root and need `scripts/build-native.sh` and `scripts
 | `tests/net/test-hot-join.sh` | Two native instances on loopback: the server starts E1M1, a client joins after 10 s, gets the savegame and plays 40 s; their `-testdump` files must agree for every tic both have, from the client's first. `--together` starts both at once (`-server 2`); `--bots` adds a bot (fails today, `bugs.md` L23); `--state N` writes the text state of tic N on both. | 56 s (35 s together) |
 | `tests/asan-demos.sh` | Builds `build/asan` (ASan and UBSan, recover on), plays all 11 demos and groups the reports by site; a site not in `tests/asan-known.txt` fails the run. | see `00-baseline.md` |
 | `tests/sprite-column-oob.sh` (F1) | 10 s of `-warp 1 1` per IWAD at 8 and 24 bpp. | 60 s |
+| `tests/savegame-portable.sh` (F2) | The savegame is the same on native and wasm (section 10). `-testsizes` on both builds: the bytes one record of each sector effect takes, and a write-read-write trip of each, must be the same. 7 demos, 12 saves at chosen tics (doors, platforms, floors, lights, soundtargets): the same save from native and from wasm must be byte for byte the same; every save is loaded by native and by wasm, and the two `-testdump` files of 1,100 tics must be identical, the first record (the state as loaded) equal to the saver's record at the save tic; the same for the first wasm-written save of each demo (`--full`: all). `--only REGEX`, `--jobs N`, `--full`, `--keep`. | 430 s (3 runs at once) |
+| `tests/savegame-old.sh` (F2) | The build from before F2 (`git worktree` of `72924ef` outside the tree, built with this tree's `test_dump.c`): its state as loaded differs from the state it saved (the soundtarget, L30) and the new build's does not; the new build loads the old savegame file and plays on; refuses a server's old-layout savegame; the old build refuses the new one; a join between the two builds over UDP prints the reason both ways. `--no-join`, `--old REV`, `--keep`. | about 140 s |
 | `scripts/run-headless.sh` | One demo, without `-testdump`: the game must behave as before and exit 0. | 63-206 s per demo |
 
-Helpers: `tests/tools/testdump-diff.py A B [--common]` compares two `-testdump` files (`--info A` prints the count); `tests/tools/state-diff.py A B` shows the first differing lines of two `-teststate` files with only the fields that differ; `tests/tools/sanitizer-sites.py` groups sanitizer reports; `tests/tools/run-wasm.js` is the headless runner above.
+Helpers: `tests/tools/dump-at.py A TIC B TIC|first` compares one record of a `-testdump` file with one of another, ignoring the tic (the state as loaded against the state as saved); `tests/tools/run-wasm.js --put FILE[=NAME]` puts a file (a savegame) into the wasm game's `/work` before it starts; `tests/tools/testdump-diff.py A B [--common]` compares two `-testdump` files (`--info A` prints the count); `tests/tools/state-diff.py A B` shows the first differing lines of two `-teststate` files with only the fields that differ; `tests/tools/sanitizer-sites.py` groups sanitizer reports; `tests/tools/run-wasm.js` is the headless runner above.
 
 The state hash itself (`-testdump FILE [-teststate FROM [TO]]`, what is in it and what is not) is in [`code-facts.md`](code-facts.md) section 11. Test-only: without the option nothing changes.
 
@@ -180,4 +182,18 @@ build/native/bin/doomlegacy -iwad testdata/freedoom1.wad -relay 127.0.0.1:7777 -
 | `tests/net/test-relay-errors.sh` | Bad arguments, a relay nobody listens on (server, joiner, dedicated), a room that does not exist, a full room (the relay's limit and the game's own `sv_maxplayers`), the relay killed during a game (also with a `-dedicated` server), a silent member dropped by the relay, the host killed, a host that never answers. Each has a time limit and checks the message and what the game does next. `--only REGEX`, `--list`, `--bin FILE`. | about 2 min |
 
 `tests/net/lib.sh` has what both share (the relay, the games, stopping every process they started: a test fails if one had to be killed or is left running). The tests use real time and a full core per game: run nothing else at the same time.
+
+## 10. The savegame test options (brief F2)
+
+Test-only, like `-testdump`: all in `src/test_dump.c`, called from `TestDump_Tic` (every tic) and `TestDump_Init`; nothing changes without them and nothing goes on the wire. Written so that a build from before F2 compiles them with this file copied in (`tests/savegame-old.sh` does that).
+
+| Option | What it does |
+|---|---|
+| `-testsave TIC FILE [game]` | At game tic TIC (the tic of the `-testdump` record, so after the tic ran), right after that record, writes to FILE what the join sends: `P_Savegame_Write_header( NULL, 1 )` and `P_Savegame_Save_game()`. With `game` the header of a savegame file instead. May be given many times. Prints `TEST: save holds: mobj N ceiling N ...`: the thinkers of each type and the sectors with a soundtarget, as the game counted them |
+| `-testquit TIC` | Quits with status 0 at tic TIC, after the above |
+| `-testload FILE` | At the first tic loads FILE as a joining client does (`P_Savegame_Read_header`, `P_Savegame_Load_game`, a header of either kind) and plays on with no input, as fast as the single-player server runs (real time), nothing drawn. The first record is the state as loaded. With `-timedemo DEMO` or `-playdemo DEMO` the game keeps what the demo set up (demo version, compatibility switches, `mobjinfo` changes: a savegame taken in a demo needs them) and takes over from it at the first tic; without, it is a plain single-player game. Prints `TEST: load holds: ...` |
+| `-testsizes` | Prints `size NAME BYTES roundtrip ok|FAIL` for each sector effect and quits: the bytes one record takes in a savegame, and whether a record whose every byte is set survives write, read, write |
+| `-testcensus` | Prints the census of the thinkers each time a count reaches a new maximum in the run (what a run produces) |
+
+A savegame written headless needs `-nodraw` to be the same on two machines (`bugs.md` L41), and a fresh `-home`: the config file keeps `botrandom`, a network variable that the game changes, and a savegame holds the network variables.
 
