@@ -230,8 +230,10 @@ PY
             reo=$((reo + $(printf '%s' "$line" | sed -n 's/.*reordered \([0-9]*\).*/\1/p' | sed 's/^$/0/')))
         done
         echo "  impairment applied ($impair): $lost lost, $dup duplicated, $reo reordered (all processes together)"
-        t_check "impairment was applied: datagrams lost, duplicated and reordered" \
-            test "$lost" -gt 0 -a "$dup" -gt 0 -a "$reo" -gt 0
+        # every kind the spec names must show in the counters
+        [[ "$impair" == *loss=* ]] && t_check "impairment was applied: datagrams were lost ($lost)" test "$lost" -gt 0
+        [[ "$impair" == *dup=* ]] && t_check "impairment was applied: datagrams were duplicated ($dup)" test "$dup" -gt 0
+        [[ "$impair" == *reorder=* ]] && t_check "impairment was applied: datagrams were reordered ($reo)" test "$reo" -gt 0
     fi
     if [ "$t_fail" -eq "$before_fail" ]; then echo "  case $label: PASS ($((SECONDS - case_start)) s)"; else echo "  case $label: FAIL"; fi
     if [ -z "${T_KEEP:-}" ]; then

@@ -156,7 +156,9 @@ t_game() {
     local name="$1"; shift
     game_dir="$t_tmp/$name"
     mkdir -p "$game_dir"
-    ( cd "$game_dir" && exec env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+    # a game that floods its output (a run against a build that does not know -relay did)
+    # must not fill the disk: files are limited to 256 MB
+    ( ulimit -f 262144; cd "$game_dir" && exec env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
         ASAN_OPTIONS="${ASAN_OPTIONS:-halt_on_error=0:detect_leaks=0}" ${T_ENV:-} \
         "$game_bin" -home "$game_dir" -iwad "$iwad" -nosound -nomusic -noendtext -skill 3 "$@" \
         > "$game_dir/out.txt" 2>&1 ) &
