@@ -11,6 +11,7 @@
 #   tests/net/test-relay.sh --impair SPEC   # the impairment (default below)
 #   tests/net/test-relay.sh --bin FILE      # another game binary
 #   tests/net/test-relay.sh --keep          # keep the logs and dumps (printed at the end)
+#   tests/net/test-relay.sh --state FROM TO # also write the text state (-teststate FROM TO) on all three, to find a difference
 #   tests/net/test-relay.sh --join-after N  # seconds of play before the third player joins (default 10)
 #   tests/net/test-relay.sh --play N        # seconds of game time to compare after the join (default 30)
 #
@@ -50,6 +51,7 @@ runs=1
 do_clean=1
 do_impair=1
 dedicated=0
+state_args=()
 impair="lat=30,jit=10,loss=3,dup=2,reorder=3"
 join_after=10
 play=30
@@ -62,6 +64,7 @@ while [ $# -gt 0 ]; do
         --impair) impair="${2:?}"; shift 2 ;;
         --bin) game_bin="${2:?}"; shift 2 ;;
         --keep) T_KEEP=1; shift ;;
+        --state) state_args=(-teststate "${2:?}" "${3:?}"); shift 3 ;;
         --join-after) join_after="${2:?}"; shift 2 ;;
         --play) play="${2:?}"; shift 2 ;;
         -h|--help) sed -n '2,/^set -uo/p' "${BASH_SOURCE[0]}" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
@@ -89,7 +92,7 @@ run_case() {
     [ "$dedicated" = 1 ] && srv_args=(-relay "$relay_addr" -dedicated -server 2)
 
     T_ENV=""; [ "$imp" = 1 ] && T_ENV="VNET_IMPAIR=$impair,seed=$((seed + 1))"
-    t_game "$label-s" "${srv_args[@]}" -testdump "$t_tmp/$label-s/s.bin"
+    t_game "$label-s" "${srv_args[@]}" -testdump "$t_tmp/$label-s/s.bin" "${state_args[@]}"
     local spid=$game_pid sdir="$game_dir"
     if ! t_wait_for "$sdir/out.txt" 'vnet: room code [A-Z0-9]{6} ' 30; then
         t_bad "the server printed a room code within 30 s"; tail -5 "$sdir/out.txt"; return
@@ -98,7 +101,7 @@ run_case() {
     echo "  room $code on relay $relay_addr"
 
     T_ENV=""; [ "$imp" = 1 ] && T_ENV="VNET_IMPAIR=$impair,seed=$((seed + 2))"
-    t_game "$label-a" -relay "$relay_addr" -connect "$code" -testdump "$t_tmp/$label-a/a.bin"
+    t_game "$label-a" -relay "$relay_addr" -connect "$code" -testdump "$t_tmp/$label-a/a.bin" "${state_args[@]}"
     local apid=$game_pid adir="$game_dir"
 
     # the game starts when A has joined; let it play, then B joins in progress
@@ -120,7 +123,7 @@ run_case() {
     fi
 
     T_ENV=""; [ "$imp" = 1 ] && T_ENV="VNET_IMPAIR=$impair,seed=$((seed + 3))"
-    t_game "$label-b" -relay "$relay_addr" -connect "$code" -testdump "$t_tmp/$label-b/b.bin"
+    t_game "$label-b" -relay "$relay_addr" -connect "$code" -testdump "$t_tmp/$label-b/b.bin" "${state_args[@]}"
     local bpid=$game_pid bdir="$game_dir"
 
     local bneed=$((play * 35)) limit=$((play + 90))
@@ -152,8 +155,8 @@ run_case() {
     t_check "all three logged the same room code $code" \
         test "$(grep -l "vnet: \(room code\|joined room\) $code " "$sdir/out.txt" "$adir/out.txt" "$bdir/out.txt" | wc -l)" -eq 3
     if [ "$dedicated" = 0 ]; then
-    t_check "B joined in progress (its first record is after tic 100)" \
-        test "$(python3 -I "$diff_tool" --info "$bdir/b.bin" | sed -n 's/[^0-9]*\([0-9][0-9]*\)\.\..*/\1/p' | head -1)" -gt 100
+    local bfirst; bfirst="$(python3 -I "$diff_tool" --info "$bdir/b.bin" 2>/dev/null | sed -n 's/[^0-9]*\([0-9][0-9]*\)\.\..*/\1/p' | head -1)"
+    t_check "B joined in progress (its first record, tic ${bfirst:-none}, is after tic 100)" test "${bfirst:-0}" -gt 100
     fi
     t_check "B has at least $play s of game time after the join ($bn >= $bneed)" test "$bn" -ge "$bneed"
     local res rc

@@ -58,6 +58,9 @@ boolean I_VNet_Configure(const char * relay, const char * room, char * err, size
 
 void I_Init_VNet_Network(void)
 {
+    printf("vnet: -relay: this build has no vnet support\n");
+    fflush(stdout);
+    netgame = false;   // see vn_fatal_arg in the vnet build
     I_Error("-relay: this build has no vnet support");
 }
 
@@ -252,7 +255,8 @@ boolean I_VNet_Configure(const char * relay, const char * room, char * err, size
         if( err && err_size )  snprintf(err, err_size, "-relay %s: bad address", relay);
         return false;
     }
-    snprintf(relay_name, sizeof(relay_name), "%s", relay);
+    if( relay != relay_name )
+        snprintf(relay_name, sizeof(relay_name), "%s", relay);
     snprintf(relay_numeric, sizeof(relay_numeric), "%s", tmp);
     room_request[0] = '\0';
     if( room && room[0] )
@@ -802,12 +806,15 @@ void I_Init_VNet_Network(void)
         if( ! M_IsNextParm() )
             vn_fatal_arg("-relay needs HOST:PORT (the relay's UDP address)");
         relay = M_GetNextParm();
+        if( ! I_VNet_Configure(relay, code, err, sizeof(err)) )
+            vn_fatal_arg("%s", err);
     }
-    else
-        relay = relay_name;   // selected by I_VNet_Configure before
-
-    if( ! I_VNet_Configure(relay, code, err, sizeof(err)) )
-        vn_fatal_arg("%s", err);
+    else if( want_connect )
+    {
+        // selected by I_VNet_Configure() before: the relay is set, the room is the -connect one
+        if( ! I_VNet_Configure(relay_name, code, err, sizeof(err)) )
+            vn_fatal_arg("%s", err);
+    }
 
     I_NetOpenSocket = open_socket;
     I_AddExitFunc(vn_shutdown);
