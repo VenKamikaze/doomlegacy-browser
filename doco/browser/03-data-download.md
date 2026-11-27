@@ -167,7 +167,7 @@ Status: **done by the implementer, 27 Nov 2026; review and play-test pending.** 
 
 1. **Runner: the IWAD goes in as it is (`raw=1`), not through the loader.** `run-wasm.js` passes `?test=1&raw=1&iwad=/data/<name>`: the file is written to `/work` under its own name, with no hashing and no IndexedDB. The demo, savegame and bots tests compare the simulation, so they must not depend on the loader, and a loader that hashed a 28 MB Freedoom file on every one of the 11 demo runs would add time for nothing. The loader has its own tests. `raw` is a `?test=1` hook.
 2. **`legacy.wad` is not cached by the page.** It is part of the build (962 KB), served next to the page; the browser's HTTP cache handles it with the server's headers (`data-hosting.md`: `no-cache` for page files, so a redeploy reaches everyone). Caching it in IndexedDB would risk a `legacy.wad` of one build next to a `doomlegacy.wasm` of another.
-3. **How a picked file with any name starts the right game.** The game picks the game by the IWAD's file name and treats an unlisted name as "another IWAD" with Doom II rules (`bugs.md` L62), so the page gives the game a name: the table's file name if size and SHA-256 match an entry, else a name from the lump directory following the game table's key lumps (`FREEDOOM`+`MAP01` is `freedoom2.wad`, `FREEDOOM`+`E4M1` is `freedoom1.wad`, `MAP01` is `doom2.wad`, `E4M1` `doomu.wad`, `E3M9` `doom.wad`, `E1M1` `doom1.wad`, plus Plutonia, TNT, FreeDM, Chex Quest, Blasphemer), else the file's own (safe) name. The file is written as `/work/<name>` and the game gets `-iwad /work/<name>`. Tested: `freedoom1.wad` picked as `mydata.wad` starts "Ultimate FreeDoom"; a changed `DOOM1.WAD` (not in the table) picked as `My Doom (1).WAD` starts "Doom shareware". Not tested: Heretic/Hexen/Strife (not in the key-lump rules; they keep their own name), a registered `DOOM.WAD`/`DOOM2.WAD` (no such file here: their rules are the `E3M9` and `MAP01` ones, which the table's names `doom.wad` and `doom2.wad` need in the game too).
+3. **How a picked file with any name starts the right game.** The game picks the game by the IWAD's file name and treats an unlisted name as "another IWAD" with Doom II rules (`bugs.md` L62), so the page gives the game a name: the table's file name if size and SHA-256 match an entry, else a name from the lump directory following the game table's key lumps (`FREEDOOM`+`MAP01` is `freedoom2.wad`, `FREEDOOM`+`E4M1` is `freedoom1.wad`, `MAP01` is `doom2.wad`, `E4M1` `doomu.wad`, `E3M9` `doom.wad`, `E1M1` `doom1.wad`, plus Plutonia, TNT, FreeDM, Chex Quest, Blasphemer), else the file's own (safe) name. The file is written as `/work/<name>` and the game gets `-iwad /work/<name>`. Tested: `freedoom1.wad` picked as `mydata.wad` starts "Ultimate FreeDoom"; a changed `DOOM1.WAD` (not in the table) picked as `My Doom (1).WAD` starts "Doom shareware". Heretic, Hexen and Strife are named by their `TITLE` lump rules and, when the file already has an engine name, by that name (fix round 1; the first version wrongly gave them Doom names). Not tested with real files: Heretic, Hexen, Strife (synthetic IWADs only), a registered `DOOM.WAD`/`DOOM2.WAD` (no such file here: their rules are the `E3M9` and `MAP01` ones, which the table's names `doom.wad` and `doom2.wad` need in the game too).
 4. **The conditional request is opt-in** (`revalidate: true` in `config.js`; default false). With it: `If-None-Match` and `If-Modified-Since` from the stored ETag and Last-Modified; 304 uses the cached copy, a changed ETag downloads and replaces, a network failure or a 5xx uses the cached copy with a notice. Tested, with the default config making no request.
 5. **`persist()` result.** Asked once after the first successful store (and `persisted()` before it). **Headless Chromium here answered `false`** (no prompt; Chromium grants silently for installed, bookmarked or often visited sites and refuses a fresh profile). **Expected in Firefox** (not tried): a permission prompt, "Allow ... to store data in persistent storage", granted if the person agrees. Without it the browser may evict the file under disk pressure; the page then downloads it again. The result is in `window.dlPersistent` and nothing in the page depends on it.
 6. **Quota and "no IndexedDB": how they are simulated, and why it is close.** `?test=1&idb=quota` throws a `DOMException` named `QuotaExceededError` from inside the `put()` transaction, which the loader handles by the same road as the real error (the transaction's rejection). `idb=off` makes `indexedDB.open` throw. **Both were also done for real** in `data.js` section 7: an init script making `window.indexedDB` undefined (as some private windows do; the game's own `/persist` then fails too, and the page shows both notices and the game starts), and a 1 MB origin quota set through the devtools protocol (`Storage.overrideQuotaForOrigin`), where Chromium refuses the 4 MB store itself. In every case the game starts from the downloaded copy with a notice that it will be downloaded again next time.
@@ -208,7 +208,7 @@ Status: **done by the implementer, 27 Nov 2026; review and play-test pending.** 
 **Left over**
 
 - The play-test below, in Chromium and Firefox; Firefox is the unknown for IndexedDB (a 28 MB Freedoom record), the persistent-storage prompt, the file picker, and a private window.
-- Not tested: the Apache blocks (`apachectl configtest` and the `curl` checks in `data-hosting.md`); a registered `DOOM.WAD`/`DOOM2.WAD`; Heretic, Hexen, Strife IWADs; a real network (slow or flaky); a real CORS host.
+- Not tested: the Apache blocks (`apachectl configtest` and the `curl` checks in `data-hosting.md`); a registered `DOOM.WAD`/`DOOM2.WAD`; real Heretic, Hexen, Strife IWADs; a real network (slow or flaky); a real CORS host.
 - `revalidate: true` on a server whose `mod_deflate` rewrites the ETag downloads the whole file on every load (`data-hosting.md` says what to do).
 - Brief 06 builds on `data-hosting.md`: the `config.js` to deploy must live outside `build/wasm/bin`.
 
@@ -235,3 +235,37 @@ Do each in Chromium, then in Firefox, with a fresh profile (or a private window 
 7. **Hosting check** (optional, needs a server you control): follow "Checking it" in `data-hosting.md`: `curl -sI -H 'Accept-Encoding: gzip' ...` and `sha256sum` of the downloaded file.
 
 Things only a person can check: the file picker dialog in Firefox; the persistent-storage prompt; a real slow connection (does the bar read sensibly?); a registered `DOOM.WAD` or `DOOM2.WAD`.
+
+**Fix round 1** (after the independent review: no blockers, one should-fix, ten nits; all addressed)
+
+1. **Should-fix, names of Heretic, Hexen and Strife.** The review was right: `classify` gave Heretic's `E1M1`/`E3M9`/`E4M1` and Hexen's and Strife's `MAP01` Doom names, so they would have run as Doom games. Now (`web/data.js`): the file's own lower-cased name is kept when it is one of the engine's IWAD names (`DL_ENGINE_NAMES`, 24 names in `web/iwads.js`; `iwad-table.js` checks the list against `src/d_main.c`'s table); otherwise `classify` puts Heretic, Hexen and Strife first, by the table's own rules (a `TITLE` lump, which the table rejects for every Doom game; `ENDSTRF`; `MAP40`; `E2M2`), and the Doom rules now also require what the table requires. An exact match of size and SHA-256 with the table still comes before both. `iwad-table.js` parses `game_desc_table` (key, required and rejected lumps) and simulates the engine in table order on the lumps each entry needs: for every game, `classify` gives a name that the engine accepts as the same game. The false claim ("they keep their own name") is corrected here and in `code-facts.md` section 14.
+2. **`?iwad=` wins over a remembered picked file** (`load()` skips the local lookup when `override` is set, and an override visit stores its copy without touching `meta.source`, so the remembered choice survives).
+3. **`legacy.wad` is reserved:** a pick or URL with that name gets `game.wad` (`safeName`, and `urlFileName` in `page.js`); `/work/legacy.wad` is untouched and the cached record has the neutral name.
+4. **AC8 capitals check** now requires `from === 'cache'` and exactly 2 requests in all.
+5. **A superseded load stores nothing:** `store()` checks the abort signal before `put()` and before `setMeta`, and removes the record if the abort came between the two.
+6. **Old entries are removed after the new load has worked** (`purgeOld()`), so a configuration that points at a missing file leaves the visitors' copies.
+7. **Revalidation falls back on a bad 200** (cut off, damaged, not an IWAD) to the verified cached copy with a notice, like network errors and 5xx; a 4xx (the file is gone) is still an error.
+8. **Picker memory:** the first 12 bytes are read with `file.slice(0, 12)` and a text file or PWAD is refused without reading the rest; a file over 512 MB is refused with a message and not read.
+9. `db.onversionchange` closes the database (no check: a second tab upgrading the schema cannot happen with version 1).
+10. **`data-hosting.md`:** "distributed unmodified and free of charge", pointing at the licence text in the original shareware distribution instead of quoting it, with a statement that the wording was not checked here.
+11. **`exits.js`:** case 2 checks the overlay is visible; case 6 checks `dlStarts` is 0.
+
+**New tests and counts:** `data.js` section 10 (21 new checks: 159 of 159 in total, 46 s), `iwad-table.js` 40 of 40 (was 17), `exits.js` 18 of 18 (was 16).
+
+**Failure proofs for the new checks** (each by a served `data.js` with the fix taken out, exactly once, or a temporary edit, then reverted):
+
+| Fix removed | Checks that fail |
+|---|---|
+| `DATA_SABOTAGE=heretic` (no `TITLE` rules) | 3: Heretic registered, Heretic shareware, Hexen get the file's own name |
+| `ownname` (own engine name not kept) | 1: `Heretic.WAD` becomes `heretic1.wad` |
+| `override` (`?iwad=` does not skip the local file) | 1: the override visit uses the picked file |
+| `legacy` (no reserved name) | 2: named `LEGACY.WAD`, and the cached record |
+| `abort` (no signal check in `store`) | 1: an aborted load stored a record and set the meta |
+| `purgefirst` (purge before the load) | 1: the missing-file configuration wiped the copy |
+| `revalfall` (the old fallback condition) | 3: a damaged, a cut-off and a non-IWAD 200 ended in `nodata` |
+| `picker` (no size limit, no header read) | 2: the 600 MB file and the 20 MB text file were read whole |
+| `capitals` (the hash is not lower-cased in the signature) | 1: the capitals check (the old check, `count === 3 \|\| ...`, would have passed) |
+| `IWAD_TABLE_SABOTAGE=names` / `classify` | 1 / 7 |
+| a temporary edit of `page.js` (overlay hidden, `dlStarts` 1 after a data error) | 3 `exits.js` checks (case 2 overlay, case 2 not started, case 6 not started) |
+
+Item 9 has no check. The worktree used for this round is `/home/user/review-03`.

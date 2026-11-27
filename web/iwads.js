@@ -12,3 +12,11 @@ window.DL_IWADS = [
   { file: 'freedoom2.wad', game: 'Freedoom: Phase 2 0.13.0', size: 28787748,
     sha256: 'a8772e088847032510d97ba2312406a6998f21cbab44d4ff10696faa9c0ecd4b' }
 ];
+
+// The IWAD file names the engine's game table lists (src/d_main.c, game_desc_table), lower case. A file that already has
+// one of these names keeps it (the game picks the game by name); tests/web/iwad-table.js checks this list against d_main.c.
+window.DL_ENGINE_NAMES = [
+  'blasphem.wad', 'chex.wad', 'chex1.wad', 'doom.wad', 'doom1.wad', 'doom2.wad', 'doom_se.wad', 'doomu.wad',
+  'fdoom2.wad', 'fdoomdm.wad', 'fdoomu.wad', 'freedm.wad', 'freedoom.wad', 'freedoom1.wad', 'freedoom2.wad', 'freedu.wad',
+  'heretic.wad', 'heretic1.wad', 'hexen.wad', 'hexen1.wad', 'plutonia.wad', 'strife.wad', 'strife0.wad', 'tnt.wad'
+];

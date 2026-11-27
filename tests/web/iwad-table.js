@@ -6,6 +6,12 @@
 //
 //   node tests/web/iwad-table.js
 //   IWAD_TABLE_SABOTAGE=1 node tests/web/iwad-table.js     # a digit of one hash is changed in the table: the checks must FAIL
+//   IWAD_TABLE_SABOTAGE=names|classify node tests/web/iwad-table.js   # a name dropped from DL_ENGINE_NAMES / the Heretic rules of
+//                                                                     # classify() removed: the checks must FAIL
+//
+// Also (fix round 1): the engine's IWAD file names (web/iwads.js DL_ENGINE_NAMES) equal the ones in src/d_main.c's game_desc_table,
+// and data.js's classify() agrees with the table's own key, required and rejected lumps: for every game of the table, the lumps
+// that make the engine accept it give a file name under which the engine (simulated here, in table order) accepts the same game.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -15,7 +21,9 @@ const t = require('./lib.js');
 
 const root = t.root;
 let iwadsSrc = fs.readFileSync(path.join(root, 'web', 'iwads.js'), 'utf8');
-if (process.env.IWAD_TABLE_SABOTAGE) { iwadsSrc = iwadsSrc.replace('1d7d43be', '1d7d43bf'); }
+const SAB = process.env.IWAD_TABLE_SABOTAGE || '';
+if (SAB === '1') { iwadsSrc = iwadsSrc.replace('1d7d43be', '1d7d43bf'); }
+if (SAB === 'names') { iwadsSrc = iwadsSrc.replace("'heretic.wad', ", ''); }
 const sh = fs.readFileSync(path.join(root, 'scripts', 'fetch-test-data.sh'), 'utf8');
 
 // What the script verifies: lines "member|file name|SHA-256|MD5|SHA-1" inside the FD_WADS and D1_WADS blocks.
@@ -65,4 +73,47 @@ for (const [k, file] of [['doom1', 'doom1.wad'], ['freedoom1', 'freedoom1.wad']]
   t.check(c && e && c.url === file && c.name === file && c.size === e.size && c.sha256 === e.sha256, `config.js's ${k} entry is the table's ${file} (url, name, size, SHA-256)`);
 }
 t.check(cfg.DL_CONFIG && cfg.DL_CONFIG.data === ex.doom1 && ex.doom1.revalidate === false, 'the default configuration is the shareware entry, without revalidation');
+
+// ---- the engine's names and rules, from src/d_main.c ----
+const dmain = fs.readFileSync(path.join(root, 'src', 'd_main.c'), 'utf8');
+const region = dmain.slice(dmain.indexOf('game_desc_t  game_desc_table[ NUM_GDESC ] ='), dmain.indexOf('#ifdef LAUNCHER', dmain.indexOf('game_desc_table[ NUM_GDESC ] =')));
+const LN = { LN_MAP01: 'MAP01', LN_E1M1: 'E1M1', LN_E2M2: 'E2M2', LN_TITLE: 'TITLE' };
+const lumpsOf = (expr) => expr.split('+').map((s) => s.trim()).filter((s) => LN[s]).map((s) => LN[s]);
+const entries = [];
+const re = /\{\s*"([^"]*)"\s*,\s*(?:NULL|"[^"]*")\s*,\s*"[^"]*"\s*,\s*\{([^}]*)\}\s*,\s*NULL\s*,\s*\{([^}]*)\}\s*,\s*([^,]*),\s*([^,]*),/g;
+for (let m; (m = re.exec(region));) {
+  entries.push({ title: m[1], names: (m[2].match(/"([^"]*)"/g) || []).map((s) => s.slice(1, -1).toLowerCase()),
+                 key: (m[3].match(/"([^"]*)"/g) || []).map((s) => s.slice(1, -1)), need: lumpsOf(m[4]), reject: lumpsOf(m[5]) });
+}
+t.check(entries.length >= 20, `parsed ${entries.length} entries of game_desc_table in src/d_main.c`);
+const engineNames = [...new Set([].concat(...entries.map((e) => e.names)))].sort();
+const pageNames = ((sandbox(iwadsSrc, 'iwads.js').DL_ENGINE_NAMES) || []).slice().sort();
+t.check(JSON.stringify(engineNames) === JSON.stringify(pageNames), `web/iwads.js DL_ENGINE_NAMES (${pageNames.length}) equal the IWAD file names in d_main.c's table (${engineNames.length})`,
+        'only in d_main.c: ' + engineNames.filter((n) => !pageNames.includes(n)) + '; only in iwads.js: ' + pageNames.filter((n) => !engineNames.includes(n)));
+// The engine, in table order: the first entry that lists the name and whose lumps pass.
+function engineAccepts(name, has) {
+  for (const e of entries) {
+    if (!e.names.includes(name)) { continue; }
+    if (e.need.every((l) => has[l]) && !e.reject.some((l) => has[l]) && e.key.every((k) => has[k])) { return e; }
+  }
+  return null;
+}
+let dataSrc = fs.readFileSync(path.join(root, 'web', 'data.js'), 'utf8');
+if (SAB === 'classify') { dataSrc = dataSrc.replace("if (has.TITLE) {\n      if (has.MAP01)", "if (false) {\n      if (has.MAP01)"); }
+const dwin = sandbox(iwadsSrc, 'iwads.js');
+vm.runInNewContext(dataSrc, { window: dwin }, { filename: 'data.js' });
+for (const e of entries) {
+  if (/mode/i.test(e.title)) { continue; }          // the "... mode" entries repeat another game's names and rules
+  const has = {};
+  for (const l of e.key.concat(e.need)) { has[l] = 1; }
+  const name = dwin.DlData.classify(has);
+  const got = name && engineAccepts(name, has);
+  t.check(!!got && got.title === e.title, `${e.title} (lumps ${Object.keys(has).join(' ') || 'none'}): classify gives "${name}", which the engine accepts as "${got && got.title}"`);
+}
+// The games that also hold Doom's lumps: the whole of a real Heretic, a Hexen, a Strife (lump names only; the engine's rules decide).
+const heretic = { E1M1: 1, E2M2: 1, E3M9: 1, E4M1: 1, TITLE: 1, MAP01: 0 };
+t.check(dwin.DlData.classify(heretic) === 'heretic.wad', 'a Heretic with E3M9 and E4M1 (the registered one) is heretic.wad, not a Doom');
+t.check(dwin.DlData.classify({ E1M1: 1, TITLE: 1 }) === 'heretic1.wad', 'a shareware Heretic (no E2M2) is heretic1.wad');
+t.check(dwin.DlData.classify({ MAP01: 1, MAP40: 1, TITLE: 1 }) === 'hexen.wad' && dwin.DlData.classify({ MAP01: 1, TITLE: 1 }) === 'hexen1.wad', 'Hexen and its demo are not doom2.wad');
+t.check(dwin.DlData.classify({ ENDSTRF: 1, MAP01: 1, MAP20: 1 }) === 'strife.wad', 'Strife is not doom2.wad');
 process.exit(t.summary('iwad-table'));

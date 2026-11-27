@@ -6,7 +6,7 @@ Only the **shareware** `DOOM1.WAD` is offered for public download (decisions D9 
 
 ## What to serve
 
-One file: the extracted `DOOM1.WAD`, **unmodified**, **4,196,020 bytes, SHA-256 `1d7d43be501e67d927e415e0b8f3e29c3bf33075e859721816f652a526cac771`** (MD5 `f0cefca49926d00903cf57551d901abe`, SHA-1 `5b2e249b9c5133ec987b3ea77596381dc0d6bc1d`: the published values for shareware 1.9, [DoomWiki](https://doomwiki.org/wiki/DOOM1.WAD)). Its licence lets anyone redistribute it unmodified; do not repack or patch it, or the page refuses it.
+One file: the extracted `DOOM1.WAD`, **unmodified**, **4,196,020 bytes, SHA-256 `1d7d43be501e67d927e415e0b8f3e29c3bf33075e859721816f652a526cac771`** (MD5 `f0cefca49926d00903cf57551d901abe`, SHA-1 `5b2e249b9c5133ec987b3ea77596381dc0d6bc1d`: the published values for shareware 1.9, [DoomWiki](https://doomwiki.org/wiki/DOOM1.WAD)). The shareware licence lets it be distributed unmodified and free of charge; the licence text is in the original shareware distribution from id Software (`doom19s.zip`; read the text files in it) and is summarised on DoomWiki's DOOM1.WAD page. I have not quoted it here because I could not check the wording from this container: read it yourself before you publish. Do not repack or patch the file, or the page refuses it.
 
 `scripts/fetch-test-data.sh --only doom1` produces a verified copy as `testdata/doom1.wad`: it downloads `doom1.wad.zip`, checks the zip, takes `DOOM1.WAD` out of it and checks the file against the values above. Copy that file to your server as `doom1.wad` (any name works: the page's `config.js` says which, below).
 

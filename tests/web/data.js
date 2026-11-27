@@ -7,7 +7,7 @@
 // cache is what is tested.
 //
 //   node tests/web/data.js
-//   DATA_SABOTAGE=nocache|nohash|nolocal node tests/web/data.js    # a loader that ignores the cache / skips the
+//   DATA_SABOTAGE=nocache|nohash|nolocal|capitals|heretic|ownname|override|legacy|abort|purgefirst|revalfall|picker node tests/web/data.js    # a loader that ignores the cache / skips the
 //                                                                  # SHA-256 check / does not cache picked files: the checks must FAIL
 //
 //  1. first load (AC1): progress, the game starts, the cache holds the file
@@ -42,8 +42,17 @@ const QUERY = (extra) => '?test=1&audio=dummy&persist=0&args=' + ARGS + (extra ?
 // The sabotaged loaders: the served data.js with one feature taken out. Each replacement must apply exactly once.
 const SABOTAGES = {
   nocache: [["var cached = cache && !o.force ? cache.get(key).catch(function () { return null; }) : Promise.resolve(null);", "var cached = Promise.resolve(null);"],
-            ["if (source !== 'local' || o.force) { return null; }", "if (true) { return null; }"]],
+            ["if (source !== 'local' || o.force || o.override) { return null; }", "if (true) { return null; }"]],
   nohash: [["if (declared && declared.sha256 && hash !== declared.sha256.toLowerCase()) {", "if (false) {"]],
+  capitals: [["(o.sha256 || '').toLowerCase()].join('|')", "(o.sha256 || '')].join('|')"]],
+  heretic: [["if (has.TITLE) {\n      if (has.MAP01)", "if (false) {\n      if (has.MAP01)"]],
+  ownname: [["(ENGINE_NAMES.indexOf(own) >= 0 ? own : '') ||", "'' ||"]],
+  override: [["if (source !== 'local' || o.force || o.override) { return null; }", "if (source !== 'local' || o.force) { return null; }"]],
+  legacy: [["return RESERVED.indexOf(n.toLowerCase()) >= 0 ? 'game.wad' : n;", "return n;"]],
+  abort: [["      checkCancelled();\n      return cache.put(rec)", "      return cache.put(rec)"], ["if (cancelled()) { cache.del(rec.key).catch(function () {}); checkCancelled(); }", ""]],
+  purgefirst: [["}).then(function (r) { return purgeOld().then(function () { return r; }); });", "});"], ["      return Promise.resolve().then(function () {\n        if (!cache) { return null; }", "      return purgeOld().then(function () {\n        if (!cache) { return null; }"]],
+  revalfall: [["if (e && e.kind !== 'cancelled' && !(e.kind === 'http' && e.status < 500)) {", "if (e && (e.kind === 'network' || (e.kind === 'http' && e.status >= 500))) {"]],
+  picker: [["if (o.file.size > MAX_FILE) {", "if (false) {"], ["if (!head.ok && head.reason !== 'directory') {", "if (false) {"]],
   nolocal: [["return store(rec).then(function (stored) { return result(rec, 'picked'", "return Promise.resolve(false).then(function (stored) { return result(rec, 'picked'"]],
 };
 function sabotagedDataJs() {
@@ -501,7 +510,7 @@ async function main() {
       // the same URL and the hash in capitals is the same configuration; a changed name is another one
       cfg = doomConfig({ url: 'game.wad', name: 'freedoom1.wad', size: FD1.length, sha256: FD1_SHA.toUpperCase() });
       await reload();
-      t.check(A.count('/game.wad') === 3 || (await dlData(o.page)).from === 'cache', 'the hash written in capitals: the same signature, from the cache');
+      t.check(A.count('/game.wad') === 2 && (await dlData(o.page)).from === 'cache', `the hash written in capitals: the same signature, from the cache, no request (${A.count('/game.wad')} requests in all)`);
       // an ?iwad= visit keeps the configured entry; a later plain visit removes the visit's own entry
       A.set('/other.wad', { body: DOOM1 });
       await o.page.goto(e.base + QUERY('iwad=' + encodeURIComponent('/other.wad')));
@@ -604,6 +613,161 @@ async function main() {
       t.check(/404/.test(msg7) && /img%20src=x/.test(msg7) && (await o6.page.evaluate(() => document.querySelectorAll('#overlay img').length)) === 0 && o6.errors.length === 0, 'the same for a URL with markup in it');
       await o6.context.close();
     }
+
+    // ---- 10. fix round 1 -----------------------------------------------------------------------------------------
+    console.log('10. fix round 1');
+    const iwad = (names) => {
+      const data = Buffer.alloc(names.length * 4, 1);
+      const dir = Buffer.alloc(names.length * 16);
+      names.forEach((n, i) => { dir.writeInt32LE(12 + i * 4, i * 16); dir.writeInt32LE(4, i * 16 + 4); dir.write(n, i * 16 + 8, 'latin1'); });
+      const h = Buffer.alloc(12); h.write('IWAD'); h.writeInt32LE(names.length, 4); h.writeInt32LE(12 + data.length, 8);
+      return Buffer.concat([h, data, dir]);
+    };
+    const guard = async (what, fn) => { try { await fn(); } catch (err) { t.check(false, what + ': the test itself failed', String(err.message || err).split('\n')[0]); } };
+    const pickNamed = async (page, name, buffer) => {
+      await page.setInputFiles('#pick', { name, mimeType: 'application/octet-stream', buffer });
+      await page.waitForFunction((n) => window.dlData && (window.dlData.fileName === n || window.dlData.error) && window.dlState !== 'loading', name, { timeout: 20000 });
+      return dlData(page);
+    };
+    await guard('names of the other games', async () => {
+      reset();
+      A.set('/doom1.wad', { status: 404 });
+      const o = await fresh(e);
+      await load(e, o.page, QUERY());
+      const cases = [
+        ['a registered Heretic (E1M1 E2M2 E3M9 E4M1 TITLE) called unrelated.wad', ['E1M1', 'E2M2', 'E3M9', 'E4M1', 'TITLE', 'PLAYPAL'], 'unrelated.wad', 'heretic.wad'],
+        ['a shareware Heretic (E1M1 TITLE) called zz.wad', ['E1M1', 'TITLE', 'PLAYPAL'], 'zz.wad', 'heretic1.wad'],
+        ['a file with Heretic lumps called Heretic.WAD keeps its name (the engine knows it)', ['E1M1', 'TITLE', 'PLAYPAL'], 'Heretic.WAD', 'heretic.wad'],
+        ['a Hexen (MAP01 MAP40 TITLE) called h.wad', ['MAP01', 'MAP40', 'TITLE'], 'h.wad', 'hexen.wad'],
+        ['a Strife (MAP01 MAP20 ENDSTRF) called s.wad', ['MAP01', 'MAP20', 'ENDSTRF'], 's.wad', 'strife.wad'],
+        ['Doom II lumps (MAP01, no TITLE) called mine.wad are still Doom II', ['MAP01', 'PLAYPAL', 'TITLEPIC'], 'mine.wad', 'doom2.wad'],
+      ];
+      for (const [what, lumps, name, expect] of cases) {
+        const d = await pickNamed(o.page, name, iwad(lumps));
+        t.check(d && d.name === expect && !d.error, `${what}: the game gets "${d && d.name}" (expected ${expect})`);
+      }
+      const files = await o.page.evaluate(() => window.dlTest.listFiles('/work'));
+      t.check(files.includes('doom2.wad') && !files.includes('heretic.wad'), `the game's folder holds the last pick only (${files})`);
+      await o.context.close();
+    });
+    await guard('legacy.wad', async () => {
+      reset();
+      A.set('/doom1.wad', { status: 404 });
+      const o = await fresh(e);
+      await load(e, o.page, QUERY());
+      const before = await o.page.evaluate(() => window.dlTest.readFile('legacy.wad').length);
+      const d = await pickNamed(o.page, 'LEGACY.WAD', iwad(['FOO', 'BAR']));
+      const after = await o.page.evaluate(() => window.dlTest.readFile('legacy.wad').length);
+      const c = await cacheInfo(o.page);
+      t.check(d && d.name === 'game.wad' && before === after && before > 100000, `an IWAD picked as LEGACY.WAD gets a neutral name (${d && d.name}) and /work/legacy.wad is untouched (${before} then ${after} bytes)`);
+      t.check(c.records.length === 1 && c.records[0].name === 'game.wad', 'the cached record has the neutral name too');
+      await o.context.close();
+    });
+    await guard('override over a picked file', async () => {
+      reset();
+      A.set('/doom1.wad', { status: 404 });
+      A.set('/other.wad', { body: FD1 });
+      const o = await fresh(e);
+      await load(e, o.page, QUERY());
+      await pickNamed(o.page, 'doom1.wad', DOOM1);
+      await o.page.goto(e.base + QUERY('iwad=' + encodeURIComponent('/other.wad')));
+      await t.waitState(o.page, ['ready', 'nodata']);
+      let d = await dlData(o.page);
+      t.check(d.source === 'download' && d.name === 'freedoom1.wad' && A.count('/other.wad') === 1, `?iwad= wins over a remembered picked file (${d.source}, ${d.name})`);
+      let c = await cacheInfo(o.page);
+      t.check(c.meta.includes('source=local') && keys(c).includes('local'), `... and the remembered choice is left as it was (${c.meta})`);
+      await o.page.goto(e.base + QUERY());
+      await t.waitState(o.page, ['ready', 'nodata']);
+      d = await dlData(o.page);
+      t.check(d.source === 'local' && d.name === 'doom1.wad', `a plain visit afterwards uses the picked file again (${d.source}, ${d.name})`);
+      await o.context.close();
+    });
+    await guard('abort', async () => {
+      reset();
+      A.set('/doom1.wad', { body: DOOM1 });
+      const o2 = await fresh(e);
+      await load(e, o2.page, QUERY('idb=off'));          // a page whose own cache is not in the way
+      const kind = await o2.page.evaluate(async (args) => {
+        const ctl = new AbortController();
+        try {
+          await DlData.load({ url: '/doom1.wad', name: 'doom1.wad', size: args.size, sha256: args.sha, signal: ctl.signal, hooks: {}, onStatus: (s) => { if (/Checking/.test(s)) { ctl.abort(); } } });
+          return 'loaded';
+        } catch (err) { return err.kind || String(err); }
+      }, { size: DOOM1.length, sha: DOOM1_SHA });
+      const c = await cacheInfo(o2.page);
+      t.check(kind === 'cancelled' && c && c.records.length === 0 && c.meta.length === 0, `a load replaced after the download (aborted while the file is checked) stores nothing: ${kind}, ${c && c.records.length} records, meta ${c && c.meta}`);
+      await o2.context.close();
+      // a pick during a slow download: only the picked file ends up in the cache
+      reset();
+      A.set('/doom1.wad', { body: DOOM1, chunk: 128 * 1024, gap: 40 });
+      const o3 = await fresh(e);
+      await o3.page.goto(e.base + QUERY());
+      await o3.page.waitForFunction(() => window.dlProgress && window.dlProgress.length > 2);
+      await o3.page.setInputFiles('#pick', { name: 'mine.wad', mimeType: 'application/octet-stream', buffer: FD1 });
+      await o3.page.waitForFunction(() => window.dlData && window.dlData.source === 'local');
+      await o3.page.waitForTimeout(1500);
+      const c3 = await cacheInfo(o3.page);
+      t.check(keys(c3).join() === 'local' && c3.meta.join() === 'source=local' && (await dlData(o3.page)).name === 'freedoom1.wad', `a file picked during a slow download replaces it; only the picked file is cached (${keys(c3)}, ${c3.meta})`);
+      await o3.context.close();
+    });
+    await guard('keep old entries', async () => {
+      reset();
+      A.set('/doom1.wad', { body: DOOM1 });
+      A.set('/doom1-v3.wad', { body: DOOM1 });
+      let cfg = doomConfig();
+      A.set('/config.js', () => ({ body: Buffer.from(configJs(cfg)), type: 'text/javascript' }));
+      const o = await fresh(e);
+      const go = async () => { await o.page.goto(e.base + QUERY()); return t.waitState(o.page, ['ready', 'nodata', 'error']); };
+      await go();
+      cfg = doomConfig({ url: 'missing.wad' });
+      const st = await go();
+      let c = await cacheInfo(o.page);
+      t.check(st === 'nodata' && keys(c).join() === 'url:' + A.origin + '/doom1.wad', `a configuration that points at a missing file shows the error and leaves the visitor's copy (${st}, ${keys(c)})`);
+      cfg = doomConfig({ url: 'doom1-v3.wad' });
+      await go();
+      c = await cacheInfo(o.page);
+      t.check(keys(c).join() === 'url:' + A.origin + '/doom1-v3.wad', `a working URL then replaces it (${keys(c)})`);
+      await o.context.close();
+    });
+    await guard('revalidate fallback', async () => {
+      reset();
+      const flipped = Buffer.from(DOOM1); flipped[1000000] ^= 0xff;
+      let spec = { body: DOOM1, etag: '"one"' };
+      A.set('/doom1.wad', () => spec);
+      A.set('/config.js', () => ({ body: Buffer.from(configJs(doomConfig({ revalidate: true }))), type: 'text/javascript' }));
+      const o = await fresh(e);
+      const go = async () => { await o.page.goto(e.base + QUERY()); return t.waitState(o.page, ['ready', 'nodata', 'error']); };
+      await go();
+      for (const [what, s] of [['a damaged 200', { body: flipped, etag: '"two"' }], ['a cut-off 200', { body: DOOM1, etag: '"three"', cutTo: DOOM1.length - 5000 }], ['a 200 that is no IWAD', { body: Buffer.from('<html>oops</html>'), etag: '"four"', type: 'text/html' }]]) {
+        spec = s;
+        const st = await go();
+        const d = await dlData(o.page);
+        const c = await cacheInfo(o.page);
+        t.check(st === 'ready' && d.from === 'cache' && d.sha256 === DOOM1_SHA && d.notes.some((n) => /failed the checks/.test(n)) && c.records.length === 1 && c.records[0].sha256 === DOOM1_SHA && c.records[0].etag === '"one"',
+                `revalidating, ${what}: the verified cached copy is used, with a notice, and stays in the cache (${st}, ${d && d.from}: ${d && d.notes})`);
+      }
+      await o.context.close();
+    });
+    await guard('picker limit', async () => {
+      reset();
+      const o = await fresh(e);
+      await load(e, o.page, QUERY());
+      const r = await o.page.evaluate(async () => {
+        const calls = [];
+        const out = {};
+        const big = { name: 'big.wad', size: 600 * 1048576, slice() { calls.push('slice'); return new Blob([]); }, arrayBuffer() { calls.push('all'); return Promise.reject(new Error('read')); } };
+        try { await DlData.load({ url: '/x.wad', file: big, hooks: { idb: 'off' } }); out.big = 'loaded'; } catch (err) { out.big = err.kind + ': ' + err.message; }
+        out.bigCalls = calls.splice(0).join();
+        const text = new Blob([new Uint8Array(20 * 1048576).fill(65)]);
+        const fake = { name: 'text.wad', size: text.size, slice(a, b) { calls.push('slice'); return text.slice(a, b); }, arrayBuffer() { calls.push('all'); return text.arrayBuffer(); } };
+        try { await DlData.load({ url: '/x.wad', file: fake, hooks: { idb: 'off' } }); out.text = 'loaded'; } catch (err) { out.text = err.kind + ': ' + err.message; }
+        out.textCalls = calls.join();
+        return out;
+      });
+      t.check(/^size: .*512/.test(r.big) && r.bigCalls === '', `a file over 512 MB is refused with a message and not read (${r.big.slice(0, 90)}; calls: ${r.bigCalls || 'none'})`);
+      t.check(/^notiwad: /.test(r.text) && r.textCalls === 'slice', `a 20 MB text file is refused after reading its first 12 bytes only (calls: ${r.textCalls})`);
+      await o.context.close();
+    });
   } finally {
     await A.close(); await B.close();
     await browser.close().catch(() => {});

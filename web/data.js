@@ -99,8 +99,15 @@
     'doom1.wad': 'Doom shareware', 'doom.wad': 'Doom', 'doomu.wad': 'The Ultimate Doom', 'doom2.wad': 'Doom II',
     'plutonia.wad': 'Final Doom: Plutonia', 'tnt.wad': 'Final Doom: TNT Evilution',
     'freedoom1.wad': 'Freedoom: Phase 1', 'freedoom2.wad': 'Freedoom: Phase 2', 'freedm.wad': 'FreeDM',
-    'chex1.wad': 'Chex Quest', 'blasphem.wad': 'Blasphemer'
+    'chex1.wad': 'Chex Quest', 'blasphem.wad': 'Blasphemer',
+    'heretic.wad': 'Heretic', 'heretic1.wad': 'Heretic shareware', 'hexen.wad': 'Hexen', 'hexen1.wad': 'Hexen demo',
+    'strife.wad': 'Strife', 'strife0.wad': 'Strife shareware'
   };
+  // The IWAD file names the engine's game table lists (src/d_main.c game_desc_table), lower case: iwads.js, checked against
+  // d_main.c by tests/web/iwad-table.js. A file that already has one of them keeps it: the game knows the name.
+  var ENGINE_NAMES = window.DL_ENGINE_NAMES || [];
+  var RESERVED = ['legacy.wad'];        // the build's own file in /work: never the name of the game data
+  var MAX_FILE = 512 * 1048576;         // the largest file the picker reads into memory
 
   function identify(size, sha) {
     for (var i = 0; i < KNOWN.length; i++) { if (KNOWN[i].size === size && KNOWN[i].sha256 === sha) { return KNOWN[i]; } }
@@ -108,19 +115,27 @@
   }
 
   // The file name the game must be given to pick the right game: src/d_main.c's game_desc_table chooses by file
-  // name and then checks key lumps. This follows the table's key lumps (the first name of each entry); '' for a
-  // WAD it does not know, which then keeps its own name and the game takes it as "another IWAD".
+  // name and then checks the key, required and rejected lumps (TITLE, MAP01, E1M1, E2M2 and the entry's own two). This
+  // follows the table, in its order: the first name of each entry; '' for a WAD it does not know.
+  // Heretic, Hexen and Strife also have E1M1, E3M9, E4M1 or MAP01, so their rules (a TITLE lump: the Doom games have
+  // TITLEPIC, and the table rejects TITLE for them) come first.
   function classify(has) {
     if (has.FREEDOOM) {
       if (has.FREEDM) { return 'freedm.wad'; }
       if (has.MAP01) { return 'freedoom2.wad'; }
       if (has.E4M1) { return 'freedoom1.wad'; }
     }
-    if (has.BLASPHEM) { return 'blasphem.wad'; }
-    if (has.W94_1 && has.POSSH0M0) { return 'chex1.wad'; }
+    if (has.BLASPHEM && has.E1M1 && has.TITLE) { return 'blasphem.wad'; }
+    if (has.ENDSTRF) { return has.MAP01 ? (has.MAP20 ? 'strife.wad' : '') : 'strife0.wad'; }
+    if (has.TITLE) {
+      if (has.MAP01) { return has.MAP40 ? 'hexen.wad' : 'hexen1.wad'; }
+      if (has.E1M1) { return has.E2M2 ? 'heretic.wad' : 'heretic1.wad'; }
+    }
+    if (has.TITLE) { return ''; }
+    if (has.W94_1 && has.POSSH0M0 && has.E1M1) { return 'chex1.wad'; }
     if (has.MAP01) { return has.CAMO1 ? 'plutonia.wad' : has.REDTNT2 ? 'tnt.wad' : 'doom2.wad'; }
-    if (has.E4M1) { return 'doomu.wad'; }
-    if (has.E3M9) { return 'doom.wad'; }
+    if (has.E4M1 && has.E1M1 && has.E2M2) { return 'doomu.wad'; }
+    if (has.E3M9 && has.E1M1 && has.E2M2) { return 'doom.wad'; }
     if (has.E1M1) { return 'doom1.wad'; }
     return '';
   }
@@ -156,7 +171,8 @@
 
   function safeName(n) {
     n = String(n || '').replace(/[^A-Za-z0-9._-]/g, '_');
-    return /\.wad$/i.test(n) ? n : (n ? n + '.wad' : 'game.wad');
+    n = /\.wad$/i.test(n) ? n : (n ? n + '.wad' : 'game.wad');
+    return RESERVED.indexOf(n.toLowerCase()) >= 0 ? 'game.wad' : n;
   }
   function nameOf(url) {
     try { return decodeURIComponent(new URL(url, location.href).pathname.split('/').pop()); } catch (e) { return ''; }
@@ -188,8 +204,11 @@
       throw DataError('truncated', what + ' is not a whole IWAD: ' + info.detail + ' (' + fmt(size) + ' bytes), so it looks cut off or damaged.', { size: size, sha256: hash });
     }
     var entry = identify(size, hash);
-    var name = (declared && declared.name) || (entry && entry.file) || info.game || safeName(fallback);
-    var game = entry ? entry.game : (GAMES[info.game] ? GAMES[info.game] : 'an IWAD the game will identify');
+    // The name: the config's; else an exact match of the table; else the file's own name when the engine knows it (a
+    // Heretic file called heretic.wad is Heretic); else what its lumps say; else its own name made safe.
+    var own = String(fallback || '').toLowerCase();
+    var name = (declared && declared.name) || (entry && entry.file) || (ENGINE_NAMES.indexOf(own) >= 0 ? own : '') || info.game || safeName(fallback);
+    var game = entry ? entry.game : (GAMES[name] ? GAMES[name] : 'an IWAD the game will identify');
     return { name: name, game: game, entry: entry, info: info };
   }
 
@@ -208,7 +227,7 @@
         db.createObjectStore('files', { keyPath: 'key' });
         db.createObjectStore('meta', { keyPath: 'key' });
       };
-      req.onsuccess = function () { resolve(req.result); };
+      req.onsuccess = function () { var db = req.result; db.onversionchange = function () { db.close(); }; resolve(db); };
       req.onerror = function () { reject(req.error || new Error('could not open the database')); };
       req.onblocked = function () { reject(new Error('the database is blocked by another tab')); };
     });
@@ -394,12 +413,21 @@
     var forceJs = !!(o.hooks && o.hooks.sha === 'js');
     var keep = (o.keepUrls || []).map(function (u) { return 'url:' + new URL(u, location.href).href; });
 
-    function store(rec) {
+    // A load that was replaced (a file picked while it ran) must not write the cache or the meta record.
+    function cancelled() { return !!(o.signal && o.signal.aborted); }
+    function checkCancelled() { if (cancelled()) { throw DataError('cancelled', 'Cancelled.'); } }
+    // setSource false: an ?iwad= visit stores its copy but leaves the remembered choice (a picked file) as it is.
+    function store(rec, setSource) {
       if (!cache) { return Promise.resolve(false); }
-      return cache.put(rec).then(function () { return cache.setMeta('source', rec.key === LOCAL_KEY ? 'local' : 'url'); }).then(function () {
+      checkCancelled();
+      return cache.put(rec).then(function () {
+        if (cancelled()) { cache.del(rec.key).catch(function () {}); checkCancelled(); }
+        if (setSource !== false) { return cache.setMeta('source', rec.key === LOCAL_KEY ? 'local' : 'url'); }
+      }).then(function () {
         askPersistent();
         return true;
       }, function (e) {
+        if (e && e.kind === 'cancelled') { throw e; }
         notes.push(storeProblem(e) + '. The game will start, but ' + (rec.key === LOCAL_KEY ? 'your file will have to be picked again next time.' : 'the data will be downloaded again next time.'));
         return false;
       });
@@ -424,29 +452,43 @@
     });
 
     return opened.then(function () {
-      // A picked file.
+      // A picked file. Its first 12 bytes are read alone (a text file, a PWAD or a huge file is refused without reading it
+      // all), and a file over MAX_FILE is not read at all.
       if (o.file) {
         status('Reading ' + o.file.name + '...');
-        return o.file.arrayBuffer().then(function (ab) {
+        var what = 'The file "' + o.file.name + '"';
+        if (o.file.size > MAX_FILE) {
+          throw DataError('size', what + ' is ' + mb(o.file.size) + ', more than the ' + mb(MAX_FILE) + ' this page reads into memory. A Doom IWAD is much smaller (the shareware one is 4 MB, Doom II 14 MB, Freedoom 29 MB).', { size: o.file.size });
+        }
+        return o.file.slice(0, 12).arrayBuffer().then(function (hb) {
+          var head = inspect(new Uint8Array(hb));
+          if (!head.ok && head.reason !== 'directory') {
+            throw DataError('notiwad', what + ' is not a Doom data file (an IWAD): ' + head.detail + '. Found: ' + fmt(o.file.size) + ' bytes.', { size: o.file.size });
+          }
+          return o.file.arrayBuffer();
+        }).then(function (ab) {
           var bytes = new Uint8Array(ab);
           return sha256(bytes, forceJs).then(function (h) {
-            var what = 'The file "' + o.file.name + '"';
             var v = verify(bytes, h.hex, what, null, o.file.name);
             var rec = newRecord(LOCAL_KEY, bytes, h.hex, { name: v.name, fileName: o.file.name });
             return store(rec).then(function (stored) { return result(rec, 'picked', { cached: stored, hashMs: h.ms, hashHow: h.how }); });
           });
         });
       }
-      // Remove copies of urls that are no longer configured; the picked file is kept.
-      var purge = cache ? cache.keys().then(function (keys) {
-        return Promise.all(keys.filter(function (k) { return k !== key && k !== LOCAL_KEY && keep.indexOf(k) < 0; }).map(function (k) { return cache.del(k); }));
-      }).catch(function () {}) : Promise.resolve();
-      return purge.then(function () {
+      // Entries of urls that are no longer configured are removed, but only after this load has worked: a configuration that
+      // points at a missing file must not wipe the copies that visitors have.
+      function purgeOld() {
+        if (!cache || cancelled()) { return Promise.resolve(); }
+        return cache.keys().then(function (keys) {
+          return Promise.all(keys.filter(function (k) { return k !== key && k !== LOCAL_KEY && keep.indexOf(k) < 0; }).map(function (k) { return cache.del(k); }));
+        }).catch(function () {});
+      }
+      return Promise.resolve().then(function () {
         if (!cache) { return null; }
         if (o.useDownload) { return dropLocal().then(function () { return 'url'; }); }
         return cache.getMeta('source').catch(function () { return null; });
       }).then(function (source) {
-        if (source !== 'local' || o.force) { return null; }
+        if (source !== 'local' || o.force || o.override) { return null; }      // ?iwad= wins over a remembered pick
         return cache.get(LOCAL_KEY).then(function (rec) {
           if (!rec || !rec.bytes || rec.bytes.byteLength !== rec.size || !rec.name) { return null; }
           return intact(rec, forceJs).then(function (ok) {
@@ -476,28 +518,33 @@
             }
             status('Downloading the game data...');
             var t0 = performance.now();
-            return download(o.url, { size: o.size, headers: headers, onProgress: o.onProgress, stallMs: o.stallMs, signal: o.signal }).then(function (d) {
+            var attempt = download(o.url, { size: o.size, headers: headers, onProgress: o.onProgress, stallMs: o.stallMs, signal: o.signal }).then(function (d) {
               if (d.notModified) { return result(rec, 'revalidated'); }
               status('Checking the file...');
               return sha256(d.bytes, forceJs).then(function (h) {
                 var v = verify(d.bytes, h.hex, 'The file from ' + absolute, { size: o.size, sha256: o.sha256, name: o.name }, nameOf(absolute));
                 var downloadMs = performance.now() - t0;
                 var fresh = newRecord(key, d.bytes, h.hex, { name: v.name, url: absolute, etag: d.etag, lastModified: d.lastModified });
-                return store(fresh).then(function (stored) {
+                return store(fresh, !o.override).then(function (stored) {
                   return result(fresh, 'network', { cached: stored, hashMs: h.ms, hashHow: h.how, downloadMs: downloadMs });
                 });
               });
-            }, function (e) {
-              // Could not ask the server, but a copy that was good is in the browser: use it.
-              if (headers && e && (e.kind === 'network' || (e.kind === 'http' && e.status >= 500))) {
-                notes.push('The server could not be reached to check for a newer version' + (e.status ? ' (it answered ' + e.status + ')' : '') + '; using the copy kept in this browser.');
+            });
+            if (!headers) { return attempt; }
+            // Revalidating, with a verified copy in the browser: if the server cannot be asked, answers 5xx, or sends something
+            // that fails the checks (a cut-off 200, a damaged or wrong file), the copy that was good is used, with a notice.
+            return attempt.catch(function (e) {
+              if (e && e.kind !== 'cancelled' && !(e.kind === 'http' && e.status < 500)) {
+                notes.push(e.kind === 'network' || e.kind === 'http'
+                  ? 'The server could not be reached to check for a newer version' + (e.status ? ' (it answered ' + e.status + ')' : '') + '; using the copy kept in this browser.'
+                  : 'The server sent a file that failed the checks (' + e.message.split('. ')[0] + '); using the copy kept in this browser.');
                 return result(rec, 'cache');
               }
               throw e;
             });
           });
         });
-      });
+      }).then(function (r) { return purgeOld().then(function () { return r; }); });
     });
   }
 

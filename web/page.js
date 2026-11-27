@@ -315,7 +315,7 @@
     var n = '';
     try { n = decodeURIComponent(new URL(u, location.href).pathname.split('/').pop()); } catch (e) { /* below */ }
     n = n.replace(/[^A-Za-z0-9._-]/g, '_');
-    return /\.wad$/i.test(n) ? n : 'game.wad';
+    return /\.wad$/i.test(n) && n.toLowerCase() !== 'legacy.wad' ? n : 'game.wad';      // legacy.wad is the build's own file
   }
 
   function dataOptions() {
@@ -327,6 +327,7 @@
       size: OVERRIDE ? 0 : (CONFIG.size || 0),
       sha256: OVERRIDE ? '' : (CONFIG.sha256 || ''),
       revalidate: !OVERRIDE && !!CONFIG.revalidate,
+      override: !!OVERRIDE,
       keepUrls: [CONFIG.url],
       hooks: hooks,
       stallMs: (TEST && +params.get('stall')) || 30000

@@ -57,6 +57,7 @@ async function main() {
       const vis = await o.page.evaluate(() => ['pickwrap', 'retry'].map((i) => !document.getElementById(i).hidden));
       t.check(st === 'nodata' && vis[0] && vis[1], `a missing IWAD URL: the page shows the data error with the picker and "Try again" (state ${st})`);
       t.check(/nosuch\.wad/.test(status) && /404/.test(status), `... and says which file and why: "${status.replace(/\n/g, ' / ')}"`);
+      t.check(await o.page.evaluate(() => !document.getElementById('overlay').hidden), '... the overlay with the message is visible');
       t.check((await o.page.evaluate(() => window.dlStarts)) === 0, '... the game was not started');
       await o.context.close();
     }
@@ -94,6 +95,7 @@ async function main() {
       const st = await t.waitState(o.page, ['nodata', 'ready', 'error'], 20000);
       const status = await o.page.evaluate(() => document.getElementById('status').textContent);
       t.check(st === 'nodata' && /127\.0\.0\.1:1/.test(status) && /CORS/.test(status), `an IWAD URL on another origin that does not answer: a data error with the CORS hint (state ${st}): "${status.replace(/\n/g, ' / ').slice(0, 140)}"`);
+      t.check((await o.page.evaluate(() => window.dlStarts)) === 0, '... the game was not started');
       await o.context.close();
     }
   } finally { await t.stop(env); }
