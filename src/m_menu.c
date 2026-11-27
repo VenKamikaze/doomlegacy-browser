@@ -197,6 +197,7 @@
 
 #include "keys.h"
 #include "z_zone.h"
+#include "i_web.h"
 #include "w_wad.h"
 #include "p_local.h"
 #include "p_fab.h"
@@ -4962,7 +4963,7 @@ void M_QuitResponse(int ch)
         if(!nosoundfx)
         {
             dlyd_time = I_GetTime() + TICRATE*2;
-            while (dlyd_time > I_GetTime()) ;
+            while (dlyd_time > I_GetTime())  I_Web_Idle();
         }
     }
     I_Quit();  // No return
@@ -6178,6 +6179,11 @@ void M_Clear_Menus (boolean callexitmenufunc)
 
     menuactive = 0;
     I_StartupMouse( !paused );  // play mode if not paused
+#ifdef __EMSCRIPTEN__
+    // A page can be closed at any moment, so the settings are saved when the menu
+    // closes rather than only at quit. The page writes the file to IndexedDB.
+    M_SaveAllConfig();
+#endif
 }
 
 

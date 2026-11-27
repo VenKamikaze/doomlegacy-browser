@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// Run the wasm build of the game in headless Chromium (Playwright), with the data
-// in MEMFS, and bring back files and the exit status.
+// Run the wasm build of the game in headless Chromium (Playwright), with the data in MEMFS,
+// and bring back files and the exit status.
 //
 //   node tests/tools/run-wasm.js [options] -- GAME ARGS...
 //
@@ -13,20 +13,27 @@
 //                      base name; split at the last '=', so NAME has none) before the game starts (repeatable)
 //   --get PATH=FILE    after the game exits, copy MEMFS file /work/PATH to FILE (repeatable)
 //   --legacy FILE      legacy.wad (default common/legacy.wad), put into MEMFS as /work/legacy.wad
-//   --wasm DIR         where doomlegacy.js is (default build/wasm/bin)
+//   --wasm DIR         where the build is (default build/wasm/bin)
 //   --timeout SECS     give up after SECS (default 600): exit status 124
+//   --fastms N         with the test pacing, yield every N ms (default 20)
+//   --paced            normal pacing (one yield per display frame) instead of the test pacing
 //
-// The game gets -home /work -iwad /work/<iwad> -nosound -nomusic -noendtext, then
-// GAME ARGS. Its output is copied to stdout. The exit status is the game's own.
+// The runner drives the page that users get (web/, built into build/wasm/bin) with its test
+// hooks (?test=1): it opens index.html with the data served from this process, clicks "Click to
+// start", waits for the game to exit and reads the files out of /work. The game gets
+// -home /work -iwad /work/<iwad> -nomusic -noendtext (the page's) and -nosound, then GAME ARGS. The video
+// mode is left to the game (video=native: a canvas the size of the 1280x720 window, as before the page
+// existed), so the tests' speed does not change with the page's 640x480 window.
+// Its output is copied to stdout. The exit status is the game's own.
 //
-// Why a browser and not Node: the SDL2 port's only video driver is the one for a web
-// page (a canvas, `screen`, gamepad events); under Node SDL_Init fails. The game's
-// main loop does not return (no ASYNCIFY yet, brief 02), so it runs in one blocking
-// callMain on the page's main thread.
+// Test pacing (the page's fast=1): the game yields to the page every 20 ms instead of once per
+// display frame, so -timedemo runs as fast as the CPU allows, as it did before ASYNCIFY.
+//
+// Why a browser and not Node: the SDL2 port's only video driver is the one for a web page (a
+// canvas, `screen`, gamepad events); under Node SDL_Init fails.
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const http = require('http');
 const { chromium } = require('playwright');
 
 const opts = { iwad: null, demos: [], puts: [], gets: [], legacy: path.join(__dirname, '../../common/legacy.wad'), wasm: path.join(__dirname, '../../build/wasm/bin'), timeout: 600 };
@@ -42,28 +49,24 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--legacy') opts.legacy = argv[++i];
   else if (a === '--wasm') opts.wasm = argv[++i];
   else if (a === '--timeout') opts.timeout = Number(argv[++i]);
+  else if (a === '--paced') opts.paced = true;
+  else if (a === '--fastms') opts.fastms = argv[++i];
   else { console.error('unknown option ' + a); process.exit(2); }
 }
 if (!opts.iwad) { console.error('--iwad is required'); process.exit(2); }
 
-const dataFiles = [opts.iwad, opts.legacy, ...opts.demos].map((f) => ({ src: f, name: path.basename(f) })).concat(opts.puts);
-const page_html = `<!doctype html><meta charset=utf-8><title>doomlegacy test</title>
-<canvas id=canvas width=320 height=200></canvas>
-<script src="/doomlegacy.js"></script>`;
+const dataFiles = [opts.iwad, ...opts.demos].map((f) => ({ src: f, name: path.basename(f) })).concat(opts.puts);
+const { serve } = require('./serve.js');
 
-const server = http.createServer((req, res) => {
-  const u = decodeURIComponent(req.url.split('?')[0]);
-  if (u === '/') { res.setHeader('content-type', 'text/html'); res.end(page_html); return; }
-  let file = null;
-  if (u.startsWith('/data/')) { const d = dataFiles.find((f) => f.name === u.slice(6)); if (d) file = d.src; }
-  else if (u === '/doomlegacy.js' || u === '/doomlegacy.wasm') file = path.resolve(opts.wasm, u.slice(1));
-  if (!file) { res.statusCode = 404; res.end(); return; }
-  res.setHeader('content-type', u.endsWith('.wasm') ? 'application/wasm' : u.endsWith('.js') ? 'text/javascript' : 'application/octet-stream');
-  fs.createReadStream(file).pipe(res);
-});
+// The page and the build come from --wasm; a build without the page (an old one) gets web/.
+const mounts = { '/legacy.wad': path.resolve(opts.legacy) };
+for (const f of ['index.html', 'page.js', 'page.css']) {
+  if (!fs.existsSync(path.join(opts.wasm, f))) mounts['/' + f] = path.join(__dirname, '../../web', f);
+}
+for (const d of dataFiles) mounts['/data/' + d.name] = d.src;
 
 async function main() {
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const server = await serve(path.resolve(opts.wasm), mounts, 0);
   const port = server.address().port;
   const browser = await chromium.launch();
   let status = 1;
@@ -72,46 +75,39 @@ async function main() {
     page.on('console', (m) => process.stdout.write(m.text() + '\n'));
     page.on('pageerror', (e) => process.stdout.write('pageerror: ' + e.message + '\n'));
     page.on('crash', () => { process.stdout.write('run-wasm: the page crashed\n'); });
-    await page.goto(`http://127.0.0.1:${port}/`);
-    const job = {
-      files: dataFiles.map((f) => f.name),
-      iwad: path.basename(opts.iwad), gets: opts.gets.map((g) => g.split('=')[0]), game,
-    };
-    const run = page.evaluate(async (job) => {
-      const mod = await createDoomLegacy({
-        canvas: document.getElementById('canvas'),
-        noInitialRun: true,
-        print: (s) => console.log(s),
-        printErr: (s) => console.log(s),
-        // the environment is read when the runtime starts
-        preRun: [(m) => { m.ENV.SDL_AUDIODRIVER = 'dummy'; }],
-      });
-      const FS = mod.FS;
-      FS.mkdir('/work');
-      for (const f of job.files) {
-        const buf = new Uint8Array(await (await fetch('/data/' + f)).arrayBuffer());
-        FS.writeFile('/work/' + f, buf);
+    const query = new URLSearchParams({
+      test: '1', persist: '0', home: '/work', audio: 'dummy', video: 'native', iwad: '/data/' + path.basename(opts.iwad),
+      files: dataFiles.filter((f) => f.src !== opts.iwad).map((f) => '/data/' + encodeURIComponent(f.name)).join(','),
+      args: JSON.stringify(['-nosound', ...game]),
+    });
+    if (!opts.paced) query.set('fast', '1');
+    if (opts.fastms) query.set('fastms', opts.fastms);
+    await page.goto(`http://127.0.0.1:${port}/index.html?${query}`);
+    const job = { gets: opts.gets.map((g) => g.split('=')[0]) };
+    const run = (async () => {
+      await page.waitForFunction(() => window.dlState === 'ready' || window.dlState === 'error', null, { timeout: 0, polling: 50 });
+      if (await page.evaluate(() => window.dlState) === 'error') {
+        console.log('run-wasm: ' + await page.evaluate(() => document.getElementById('status').textContent));
+        return { status: 1, out: {} };
       }
-      FS.chdir('/work');
-      let status;
-      try {
-        status = mod.callMain(['-home', '/work', '-iwad', '/work/' + job.iwad,
-                               '-nosound', '-nomusic', '-noendtext', ...job.game]);
-      } catch (e) {
-        console.log('run-wasm: ' + (e && e.stack || e));
-        status = 1;
-      }
-      const out = {};
-      for (const g of job.gets) {
-        try {
-          const bytes = FS.readFile('/work/' + g);
+      // The page's own button, clicked from the page (not by a mouse: the audio is the dummy driver, and a build
+      // without ASYNCIFY blocks inside the click until the game ends, which Playwright's click would wait for).
+      await page.evaluate(() => { setTimeout(() => document.getElementById('start').click(), 0); });
+      await page.waitForFunction(() => window.dlState === 'ended' || window.dlState === 'error', null, { timeout: 0, polling: 50 });
+      return page.evaluate((job) => {
+        const out = {};
+        for (const g of job.gets) {
+          const bytes = window.dlTest.readFile('/work/' + g);
+          if (!bytes) { out[g] = null; continue; }
           let s = '';
           for (let i = 0; i < bytes.length; i += 32768) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
           out[g] = btoa(s);
-        } catch (e) { out[g] = null; }
-      }
-      return { status: status === undefined ? 0 : status, out };
-    }, job);
+        }
+        const code = window.dlExit ? window.dlExit.code : undefined;
+        if (code === undefined) console.log('run-wasm: the game did not exit: ' + document.getElementById('status').textContent);
+        return { status: code === undefined ? 1 : code, out };
+      }, job);
+    })();
     let timer;
     const timeout = new Promise((r) => { timer = setTimeout(() => r('timeout'), opts.timeout * 1000); });
     const res = await Promise.race([run, timeout]);

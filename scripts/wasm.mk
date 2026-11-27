@@ -18,6 +18,13 @@
 # HAVE_MIXER is on because sdl/i_sound.c does not compile without it; the headless
 # runs use -nosound -nomusic.
 #
+# ASYNCIFY (D6, brief 02): the game's loops stay and yield to the page (src/i_web.h,
+# src/sdl/i_web.c). NOASYNC=1 builds a copy with the yields compiled out, only to
+# measure what ASYNCIFY costs in size (doco/browser/building.md); it cannot run in a page.
+#
+# The page (web/) and legacy.wad are copied next to the game, so build/wasm/bin is
+# the whole site; the game data is not (the page fetches it, see building.md).
+#
 # No -ffast-math: this file never adds it (upstream's Makefile does).
 
 BUILD    ?= build/wasm
@@ -34,7 +41,7 @@ SRC_MAIN := screen v_video r_draw r_plane r_segs r_sky r_things r_splats \
   am_map md5 m_menu m_misc m_argv m_bbox m_fixed m_swap m_cheat m_random \
   console command p_saveg tables info infoext dstrings dehacked w_wad w_zip \
   d_netcmd d_clisrv d_net d_netfil i_tcp i_vnet d_items d_main test_dump
-SRC_SDL  := i_system i_video i_sound i_net filesrch endtxt i_main i_nohwr
+SRC_SDL  := i_system i_video i_sound i_net filesrch endtxt i_main i_nohwr i_web
 SRC_UMI  := doom_umi_api doom_umi_parser doom_umi_lexer doom_umi_keywords
 
 SOURCES := $(addprefix src/,$(addsuffix .c,$(SRC_MAIN))) \
@@ -47,16 +54,33 @@ SDLFLAGS := -sUSE_SDL=2 -sUSE_SDL_MIXER=2
 # (music.c) defines too; a shared library hides its own on native builds. Renaming
 # ours on the command line avoids both a clash and a source change.
 DEFS     := -DLINUX -DSDL2 -DSMIF_SDL -DHAVE_MIXER -Ddetect_music_type=dl_detect_music_type
+ifeq ($(NOASYNC),1)
+DEFS     += -DDL_NO_ASYNCIFY
+ASYNCFLAGS :=
+else
+# 256 KB for the saved call stack (the default 4 KB is too small for the game's depth).
+ASYNCFLAGS := -sASYNCIFY -sASYNCIFY_STACK_SIZE=262144
+endif
 CFLAGS   := -Wall $(OPTLEV) -ffp-contract=off -fno-strict-aliasing $(DEFS) $(SDLFLAGS) -Isrc -Isrc/umapinfo -MMD -MP
 # 2 MB of stack (Emscripten's default is 64 KB), memory grows on demand.
 LDFLAGS  := $(OPTLEV) $(SDLFLAGS) -sSTACK_SIZE=2097152 -sINITIAL_MEMORY=134217728 \
   -sALLOW_MEMORY_GROWTH=1 -sEXIT_RUNTIME=1 -sFORCE_FILESYSTEM=1 \
   -sMODULARIZE=1 -sEXPORT_NAME=createDoomLegacy -sINVOKE_RUN=0 \
-  -sEXPORTED_RUNTIME_METHODS=FS,ENV,callMain
+  -sEXPORTED_RUNTIME_METHODS=FS,ENV,callMain,IDBFS -lidbfs.js $(ASYNCFLAGS) $(EXTRA_LDFLAGS)
 
 TARGET := $(BUILD)/bin/doomlegacy.js
+PAGE   := index.html page.js page.css
+SITE   := $(addprefix $(BUILD)/bin/,$(PAGE) legacy.wad)
 
-all: $(TARGET)
+all: $(TARGET) $(SITE)
+
+$(BUILD)/bin/legacy.wad: common/legacy.wad
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(BUILD)/bin/%: web/%
+	@mkdir -p $(dir $@)
+	cp $< $@
 
 $(TARGET): $(OBJS) scripts/wasm.mk
 	@mkdir -p $(dir $@)
