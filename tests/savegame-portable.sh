@@ -285,7 +285,7 @@ done
 
 # ---- stage 3: a game with bots (brief F3, AC3 and AC4) ----
 # Freedoom 1 E1M3, skill 4, two bots with long names added at tic 10, no human input, -nodraw.
-# The saves at tics 1300 and 1700 hold bots with timers, a destination and a path (the census
+# The saves at tics 800 and 1700 hold bots with timers, a destination and a path (the census
 # line "bot-path-node"). Checked:
 #   - saving changes nothing: the game that wrote two saves and the same game that wrote none
 #     have identical -testdump files for all 2,800 tics (1,100 after the last save);
@@ -298,11 +298,11 @@ if echo "bots" | grep -Eq "$only"; then
     echo
     echo "== bots: AC3 (saving changes nothing) and AC4 (same save, same state as loaded)"
     bargs=(-skill 4 -warp 1 3 +botgen 1 +botrandseed 136 -testaddbots 10 2 -nodraw)
-    bsave=(-testsave 1300 s1300.sav -testsave 1700 s1700.sav)
+    bsave=(-testsave 800 s800.sav -testsave 1700 s1700.sav)
     bdir="$work/bots"
     run_native "$bdir/nsave" "$iw1" -- "${bargs[@]}" -testdump o.bin "${bsave[@]}" -testquit 2800 &
     run_native "$bdir/nplain" "$iw1" -- "${bargs[@]}" -testdump o.bin -testquit 2800 &
-    run_wasm "$bdir/wsave" "$iw1" --get o.bin=o.bin --get s1300.sav=s1300.sav --get s1700.sav=s1700.sav \
+    run_wasm "$bdir/wsave" "$iw1" --get o.bin=o.bin --get s800.sav=s800.sav --get s1700.sav=s1700.sav \
         -- "${bargs[@]}" -testdump o.bin "${bsave[@]}" -testquit 2800 &
     wait
     for d in nsave nplain wsave; do
@@ -322,9 +322,9 @@ if echo "bots" | grep -Eq "$only"; then
         bad "bots: the saving games differ, native and wasm: $info"
     fi
     pathnodes=0
-    for t in 1300 1700; do
+    for t in 800 1700; do
         nsaves=$((nsaves+1))
-        hs="$(grep -a '^TEST: save holds' "$bdir/nsave/out.txt" | sed -n "$([ $t = 1300 ] && echo 1 || echo 2)p" | sed 's/^TEST: save holds: //')"
+        hs="$(grep -a '^TEST: save holds' "$bdir/nsave/out.txt" | sed -n "$([ $t = 800 ] && echo 1 || echo 2)p" | sed 's/^TEST: save holds: //')"
         echo "   save at tic $t holds: $(printf '%s\n' "$hs" | tr ' ' '\n' | paste -d= - - | grep -v '=0$' | tr '\n' ' ')"
         pathnodes=$((pathnodes + $(printf '%s' "$hs" | sed -n 's/.*bot-path-node \([0-9]*\).*/\1/p')))
         if [ -s "$bdir/nsave/s$t.sav" ] && cmp -s "$bdir/nsave/s$t.sav" "$bdir/wsave/s$t.sav"; then
@@ -344,8 +344,8 @@ if echo "bots" | grep -Eq "$only"; then
                 -- -nodraw -testload "s$t.sav" -testdump L.bin -testquit "$playtics"
         fi
     }
-    for t in 1300 1700; do bload $t native & bload $t wasm & wait; done
-    for t in 1300 1700; do
+    for t in 800 1700; do bload $t native & bload $t wasm & wait; done
+    for t in 800 1700; do
         ln="$bdir/load-$t-native"; lw="$bdir/load-$t-wasm"
         if [ "$(cat "$ln/exit" 2>/dev/null)" != 0 ] || [ "$(cat "$lw/exit" 2>/dev/null)" != 0 ]; then
             bad "AC4 bots: a loading run of the save at $t failed"; continue
