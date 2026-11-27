@@ -202,6 +202,6 @@ Test-only, like `-testdump`: all in `src/test_dump.c`, called from `TestDump_Tic
 
 A savegame written headless needs `-nodraw` to be the same on two machines (`bugs.md` L41), and a fresh `-home`: the config file keeps `botrandom`, a network variable that the game changes, and a savegame holds the network variables.
 
-**Builds before F3 and bots.** A build from before F3 and an F3 build cannot play one game with bots: their bots play differently, and an F3 client refuses a join whose savegame has bots without their state (`code-facts.md` §8). Without bots the two join each other as before.
+**Builds before F3 and bots.** A build from before F3 and an F3 build cannot play one game with bots: their bots play differently, and an F3 client refuses a join whose savegame has bots without their state (`code-facts.md` §8). Without bots the two join each other as before; but the refusal covers only a savegame that already holds bots (the version is still 10149), so if a bot is added later to a game they share, they part silently.
 
 **Demos and bots (F3, the user's decision of 27 Nov 2026).** The bot code changed in F3 (the player number in `regulate()`, `bugs.md` L45; the table aim, `code-facts.md` §7; `oksector`, L46). A demo recorded with bots before F3 does not play back as recorded: `G_Ticker` still runs the bots during playback and what they do besides the ticcmd (`B_Random`, zeroing the bot's momentum at an edge) stays (L47); it did not even play back the same twice on one build. The 11 demos of `tests/demo-hash.sh` have no bots and are unchanged.

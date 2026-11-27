@@ -210,3 +210,9 @@ Commits: `a54f34d` (grid, level start, rounded aim, `regulate`), `7045548` (load
 
 **Open decisions:** none new. The guard on the stage means a later bot change that empties the paths at both tics will say so rather than pass.
 
+### Fix round 2 (27 Nov 2026)
+
+- `tests/bots-level-start.sh` now reads the state text (`-teststate 599 603`): at tic 599 (old level) three bots must have a destination, 19 path nodes and 10 mobj pointers set; the first record of the new level (map 4, level time 0, found by its header, not by a fixed distance) must show no destination, no path, and every one of the eight pointers of every bot NULL or a live mobj (a pointer left from the old level shows as -2). 21 s, PASS. With `B_Level_Start` cut down to `B_forget_stuff` (destination and path only): destination and path pass, **4 stale pointers**, FAIL, 21 s.
+- `code-facts.md` §8 and `building.md`: the join refusal covers only a savegame that already holds bots, the version is still 10149, so a build before F3 and an F3 build can join a bot-less game and part silently if a bot is added later. No version bump (for the user).
+- `code-facts.md` §8: `grid=` is hashed only when a bot exists.
+
