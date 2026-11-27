@@ -4267,6 +4267,19 @@ void Got_NetXCmd_AddBot(xcmd_t * xc)  //added by AC for acbot
     byte newplayernum = READBYTE(lcp);  // unsigned
     newplayernum&=0x7F;  // remove flag bit, and any sign extension
 
+    if( newplayernum >= MAXPLAYERS )
+    {
+        // Bad player number.  Skip the rest of the command, and do not use the number.
+        if( EV_legacy >= 148 )
+        {
+            lcp++;  // colour
+            lcp += strlen( lcp ) + 1;  // name string and term
+        }
+        xc->curpos = (byte*)lcp;  // NetXCmd reading done
+        GenPrintf(EMSG_warn, "AddBot: bad player number %i, ignored.\n", newplayernum);
+        return;
+    }
+
     if( EV_legacy < 148 )
     {
         // name and color from botinfo tables

@@ -403,7 +403,7 @@ void B_Send_all_bots_NameColor( void )
 
 void Command_AddBot(void)
 {
-    byte buf[10];
+    byte buf[2 + MAXPLAYERNAME + 1];  // pn, color, name string and its 0
     byte pn = 0;
 
     if( !server )

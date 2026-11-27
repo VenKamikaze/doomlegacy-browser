@@ -4205,10 +4205,11 @@ void P_UnArchive_Bots()
         SG_Readbuf();
 
         playernum = READBYTE(save_p);
-        if( playernum > MAXPLAYERS )
+        if( playernum >= MAXPLAYERS )
         {
             I_SoftError( "SaveGame Bots: Bad Player number\n" );
-            playernum = MAXPLAYERS - 1;
+            save_game_abort = 1;
+            return;
         }
         player = & players[playernum];
 
