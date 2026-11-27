@@ -135,7 +135,7 @@ A game with bots can be joined in progress and stays in step on every machine, t
 
 ## Outcome
 
-Status: **implemented, 27 Nov 2026; awaiting review.** All eight criteria pass. Two scope changes by the user on 27 Nov 2026 came in the middle of the work (bot behaviour may change; demo compatibility may break if the docs say so): see "Decisions for the coordinator". The bot-state work found two things the brief did not name (the address in `regulate()`, `oksector`: `bugs.md` L45, L46) that the join could not have carried.
+Status: **done, 27 Nov 2026.** All eight criteria pass. An independent review and two re-reviews, four fix rounds, and the coordinator's verification (see the end of this Outcome). Two scope changes by the user on 27 Nov 2026 came in the middle of the work (bot behaviour may change; demo compatibility may break if the docs say so): see "Decisions for the coordinator". The bot-state work found two things the brief did not name (the address in `regulate()`, `oksector`: `bugs.md` L45, L46) that the join could not have carried.
 
 **What landed** (commits on the branch, in order)
 - `9c50bd8` L24 and the two player numbers, in upstream's style, alone: `byte buf[2 + MAXPLAYERNAME + 1]`; `Got_NetXCmd_AddBot` skips the command with a warning for a number of `MAXPLAYERS` or more; `P_UnArchive_Bots` tests `>=` and aborts the load.
@@ -236,4 +236,30 @@ Commits: `a54f34d` (grid, level start, rounded aim, `regulate`), `7045548` (load
 - **Docs:** `bugs.md` L25 no longer says nothing reads `bob_momx` and `bob_momy` (L53 does); L53 says plainly that a human's frame phase can differ for as long as they keep running, that games without bots are not fixed (the bob is saved only with bots, so a bot-less save stays F2's bytes) and that it is open for F4; `code-facts.md` §8: the path length bound is `numbotnodes`, and the bob entries and the loader's checks are listed.
 - **Savegames of the earlier rounds.** Saves written by earlier commits of this unmerged branch (rounds 1 and 2) have an older layout of `SYNC_botstate` (no bob entries); nothing in the savegame marks the layout (the version is still 10149). The current loader reads such a save as if the first bot record were the bob count and refuses it cleanly ("bad bot state") in the reviewer's test; they are not meant to be kept. Nothing was released with that layout.
 - Single-process tests only, as asked: `tests/bots-level-start.sh`. No hot-join or relay test was run in this round.
+
+### Review and coordinator verification (27 Nov 2026)
+
+- **Independent review** (read-only, its own worktree) of `5ff8a95..be5e9ba`: nothing blocking; 3 should-fix (the loader could read past the buffer with a long path on a big map; the grid depended on slot 0, L51; a mixed pre-F3/F3 bot game desynced silently) and 6 minor, all fixed in fix round 1. **Re-review** of round 1: two minor notes and a test gap, fixed in round 2. **Re-review** of rounds 2 and 3: no code defects; the pointer check could be fooled by memory reuse and three doc points, fixed in round 4.
+- **Coordinator verification at `3b685cd`** found `tests/net/test-hot-join.sh --bots` (default mode) failing once (tic 368, mobjs): fix round 3 found the walking bob (L53, fixed) and L54 (below).
+- **L54 is not F3's.** Plain `test-hot-join.sh`, 40 runs alternating between the build before F3 (`bc6df14`) and F3 (`b065675`): 20 of 20 and 20 of 20; 12 more on `bc6df14`: 12 of 12. In a game without bots F3 changes nothing the simulation runs (no bot code runs, the savegame is F2's bytes, only bots read the grid). It stays for F4; a single red run of `test-hot-join.sh` with or without bots is not by itself a regression.
+- **Coordinator verification at `440eaed`**: clean native, wasm and relay builds, then one test at a time:
+
+| Test | Result | Time |
+|---|---|---|
+| builds (native `--clean`, wasm clean, relay) | ok | 20 s |
+| `tests/bots-native-wasm.sh` | identical, 2,800 records, 557 aims | 83 s |
+| `tests/bots-level-start.sh` | pass | 21 s |
+| `tests/savegame-malformed.sh` (fresh ASan build) | 8 of 8 | 55 s |
+| `tests/savegame-portable.sh` (whole) | 117 passed, 0 failed | 575 s |
+| `tests/savegame-old.sh` | 12 of 12 | 133 s |
+| `test-hot-join.sh`, default / `--together` / `--no-force` | pass | 57 / 45 / 57 s |
+| `test-hot-join.sh --bots`, the same three modes | pass | 57 / 45 / 56 s |
+| `test-relay.sh` | pass | 91 s |
+| `test-relay.sh --bots --runs 3` | 6 of 6 cases | 288 s |
+| `test-relay-errors.sh` | pass | 143 s |
+| `tests/sprite-column-oob.sh` | 6 of 6 | 60 s |
+| `tests/draw-independence.sh` | pass | 92 s |
+| `tests/demo-hash.sh` | 11 of 11 | 314 s |
+| `tests/asan-demos.sh --rebuild` | 53 known, 0 new (its hot-join run is reports only, L29) | 251 s |
+| fresh clone of the branch | native and wasm build | 9 s native |
 
