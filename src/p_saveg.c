@@ -4194,6 +4194,12 @@ void P_Archive_Bots()
 // that does not know it stops at the sync byte instead of misreading the bots.
 // The path and the destination are grid coordinates, not pointers.
 //   oksector (32, a sector index or 0xFFFFFFFF)
+//   the walking bob of every player in the game: count (8), then per player the number (8),
+//            bob_momx and bob_momy (32 each).  Not a bot's state, but it decides when a
+//            player's mobj leaves its running frames (P_PlayerMobjThinker, "stop player
+//            walking sprite", p_mobj.c:480): a joiner that starts it at 0 stops a bot's
+//            running frame at once, and the server's mobj, whose bob is still running down,
+//            keeps it (bugs.md L25, L53).  Only here, so a game without bots is the same bytes.
 //   per bot: player (8), blockedcount, avoidtimer, strafetimer,
 //            weaponchangetimer, runtimer, lastMobjX, lastMobjY (32 each),
 //            destNode x and y (32 each, both 0xFFFFFFFF for none),
@@ -4211,6 +4217,18 @@ void P_Archive_Botstate()
     SearchNode_t * node;
 
     WRITE32(save_p, oksector? (oksector - sectors) : BOTSTATE_NONE);
+    n = 0;
+    for (i = 0; i < MAXPLAYERS; i++)
+        if (playeringame[i])  n++;
+    WRITEBYTE(save_p, n);
+    for (i = 0; i < MAXPLAYERS; i++)
+    {
+        if (!playeringame[i])  continue;
+        WRITEBYTE(save_p, i);
+        WRITE32(save_p, players[i].bob_momx);
+        WRITE32(save_p, players[i].bob_momy);
+    }
+    SG_Writebuf();
     for (i = 0; i < MAXPLAYERS; i++)
     {
         if (!playeringame[i])  continue;
@@ -4368,6 +4386,19 @@ void P_UnArchive_Botstate()
         oksector = &sectors[ui];
     else
         goto bad_data;
+
+    // the walking bob of the players
+    n = READBYTE(save_p);
+    if( ! SG_have( (size_t)n * 9 + 1 ) )  goto bad_data;
+    for( k = 0; k < n; k++ )
+    {
+        pn = READBYTE(save_p);
+        x = READ32(save_p);
+        y = READ32(save_p);
+        if( (pn >= MAXPLAYERS) || !playeringame[pn] )  goto bad_data;
+        players[pn].bob_momx = x;
+        players[pn].bob_momy = y;
+    }
 
     while( (pn = READBYTE(save_p)) != BOTSTATE_END )
     {

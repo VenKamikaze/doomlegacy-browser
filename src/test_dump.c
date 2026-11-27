@@ -360,6 +360,13 @@ static uint32_t hash_players( void )
         line_begin( "botglobals %d", 0 );
         F( oksector, sector_num( oksector ) );
         F( grid, B_Grid_Hash() );   // every machine must have built the same node grid
+        // The players' walking bob, which a savegame holds when there are bots (bugs.md
+        // L25, L53): it decides when a player's mobj leaves its running frames.
+        for( j = 0; j < MAXPLAYERS; j++ )
+        {
+            if( ! playeringame[j] )  continue;
+            F( bobx, players[j].bob_momx );  F( boby, players[j].bob_momy );
+        }
         if( B_Get_speed_state( &frac, &tics ) )
         {
             F( speedfrac, frac );  F( runtics, tics );
