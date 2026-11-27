@@ -166,6 +166,7 @@ byte * save_p;
 boolean  save_game_abort = 0;
 int  sg_version = 0;
 boolean  sg_portable = 0;  // sector effects in the portable layout
+static boolean  sg_net_load = 0;  // the savegame being read came by the network (a join)
 
 // =======================================================================
 //          Save Buffer Support
@@ -4336,16 +4337,30 @@ SearchNode_t * SG_bot_grid_node( int32_t x, int32_t y )
     return botNodeArray[x][y];
 }
 
+// True when n more bytes of the savegame are in the buffer: for a save read from a file,
+// what the file had (a truncated file has less), for a buffer, its size.
+static
+boolean SG_have( size_t n )
+{
+    size_t used = save_p - savebuffer;
+    size_t avail = savefile? (size_t) extfile.bufcnt : savebuffer_size;
+    return (used <= avail) && (n <= (avail - used));
+}
+
+#define BOTSTATE_CHUNK  1024  // path nodes read before the buffer is refilled
+
 static
 void P_UnArchive_Botstate()
 {
-    int32_t n, k, x, y;
+    int32_t n, k, m, x, y;
     uint32_t ui;
     byte  pn;
     bot_t * botp;
     SearchNode_t * node;
+    int32_t * xy;
 
     SG_Readbuf();
+    if( ! SG_have( 4 + 1 ) )  goto bad_data;
     ui = READU32(save_p);
     if( ui == BOTSTATE_NONE )
         oksector = NULL;
@@ -4357,6 +4372,8 @@ void P_UnArchive_Botstate()
     while( (pn = READBYTE(save_p)) != BOTSTATE_END )
     {
         SG_Readbuf();
+        // the fixed part of a record: 9 numbers and the length
+        if( save_game_abort || !SG_have( 10 * 4 ) )  goto bad_data;
         if( (pn >= MAXPLAYERS) || !playeringame[pn] || !players[pn].bot )
             goto bad_data;
         botp = players[pn].bot;
@@ -4380,30 +4397,42 @@ void P_UnArchive_Botstate()
             if( ! botp->destNode )  goto bad_data;
         }
         n = READ32(save_p);
-        if( (n < 0) || (n > xSize * ySize) )  goto bad_data;
+        // A path has each node of the grid once at most.
+        if( (n < 0) || (n > numbotnodes) )  goto bad_data;
         B_LLClear( botp->path );
         // first node first in the file: put the last one in first
         // (the list is made as it is by B_FindNextNode)
+        xy = Z_Malloc( (n + 1) * 2 * sizeof(int32_t), PU_STATIC, 0 );
+        for( k = 0; k < n; k += m )
         {
-            int32_t * xy = Z_Malloc( (n + 1) * 2 * sizeof(int32_t), PU_STATIC, 0 );
-            for( k = 0; k < n; k++ )
+            // In pieces: the buffer is refilled between them, and each piece is checked
+            // against what the file still has, so that a length the file does not back
+            // reads nothing.  Each node must be a point of the grid.
+            m = n - k;
+            if( m > BOTSTATE_CHUNK )  m = BOTSTATE_CHUNK;
+            SG_Readbuf();
+            if( save_game_abort || !SG_have( (size_t)m * 8 ) )  { Z_Free( xy );  goto bad_data; }
+            for( x = 0; x < m; x++ )
             {
-                xy[2*k] = READ32(save_p);
-                xy[2*k+1] = READ32(save_p);
-                if( (k & 0x3FF) == 0x3FF )  SG_Readbuf();
+                xy[2*(k+x)] = READ32(save_p);
+                xy[2*(k+x)+1] = READ32(save_p);
+                if( (xy[2*(k+x)] < 0) || (xy[2*(k+x)] >= xSize)
+                    || (xy[2*(k+x)+1] < 0) || (xy[2*(k+x)+1] >= ySize) )
+                {   Z_Free( xy );  goto bad_data;  }
             }
-            for( k = n - 1; k >= 0; k-- )
-            {
-                node = Z_Malloc( sizeof(SearchNode_t), PU_STATIC, 0 );
-                memset( node, 0, sizeof(SearchNode_t) );
-                node->x = xy[2*k];
-                node->y = xy[2*k+1];
-                B_LLInsertFirstNode( botp->path, node );
-            }
-            Z_Free( xy );
         }
+        for( k = n - 1; k >= 0; k-- )
+        {
+            node = Z_Malloc( sizeof(SearchNode_t), PU_STATIC, 0 );
+            memset( node, 0, sizeof(SearchNode_t) );
+            node->x = xy[2*k];
+            node->y = xy[2*k+1];
+            B_LLInsertFirstNode( botp->path, node );
+        }
+        Z_Free( xy );
         SG_Readbuf();
         if( save_game_abort )  return;
+        if( ! SG_have( 1 ) )  goto bad_data;
     }
     return;
 
@@ -4679,6 +4708,7 @@ boolean P_Savegame_Read_header( savegame_info_t * infop, byte read_netgame )
 
     // Read header
     save_game_abort = 0;	// all sync reads will check this
+    sg_net_load = read_netgame;
     SG_Readbuf();
     save_p = savebuffer;
 
@@ -4883,7 +4913,19 @@ boolean P_Savegame_Load_game(void)
         P_UnArchive_Bots();
         // Optional, a savegame of an older build does not have it
         if( SG_ReadSync( SYNC_botstate, 1 ) )
+        {
             P_UnArchive_Botstate();
+        }
+        else if( sg_net_load )
+        {
+            // A server whose bots have no state in the savegame is a build from before F3.
+            // Its bots (the phase of regulate(), the aim, oksector) do not play as ours,
+            // so a game with bots cannot be shared with it: refuse the join.
+            // (A savegame file of such a build loads, with the bots' new fields empty.)
+            I_SoftError( "LoadGame: the server's savegame has bots without their state: it is from a build before the bot changes (F3), whose bots play differently. Join refused.\n" );
+            save_game_abort = 1;
+            goto failed;
+        }
     }
 
     if( ! SG_ReadSync( SYNC_end, 1 ) )  goto sync_err;
