@@ -55,7 +55,7 @@ body {
 #overlay[hidden] { display: none; }
 #overlay h1 { margin: 0 0 4px; font-size: 1.6rem; }
 #status { margin: 0; max-width: 40em; white-space: pre-line; }
-#status.error { color: var(--bad); }
+#status.error { color: #ff7a70; }      /* the overlay is dark in both themes */
 #progress { width: min(320px, 70%); }
 button, .button {
   font: inherit;

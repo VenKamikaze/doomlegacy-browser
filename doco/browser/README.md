@@ -22,7 +22,7 @@ The goal is Doom Legacy playable in a browser (Emscripten/WASM), **with its musi
 | F2 | [Portable savegame between x86_64 and wasm32](F2-portable-savegame.md) (`bugs.md` L19, L30) | done, 26 Nov 2026 (also fixes L36 to L40, five more things a savegame lost; L43 logged) |
 | F3 | [Bots and joining a game in progress](F3-bots-hot-join.md) (`bugs.md` L23, L24; also L20, L45, L46, L51 to L53) | done, 27 Nov 2026 (bot aim without libm, a bot's whole state in the savegame; L54 logged for F4) |
 | 02 | [The Emscripten port](02-emscripten-port.md): ASYNCIFY yields in the blocking loops, a page with click to start, keyboard, mouse, sound effects, IDBFS for config and saves | done, 27 Nov 2026 (play-test pending: steps in its Outcome) |
-| 03 | [Data download](03-data-download.md): the page downloads the IWAD (default: shareware `DOOM1.WAD` from its own origin, D14), checks it, caches it in IndexedDB, a file picker for one's own copy, clear errors, hosting notes | in progress |
+| 03 | [Data download](03-data-download.md): the page downloads the IWAD (default: shareware `DOOM1.WAD` from its own origin, D14), checks it, caches it in IndexedDB, a file picker for one's own copy, clear errors, hosting notes | done by the implementer, 27 Nov 2026 (review and play-test pending) |
 | F4 | Joining a game in progress over a lossy or reordering link (`bugs.md` L31, L35): `PT_STATE` sequence number, the cause of L35, brief 01's AC4 at its full values | queued, before 04 |
 
 ## Settled decisions

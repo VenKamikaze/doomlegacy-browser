@@ -26,6 +26,10 @@
 // existed), so the tests' speed does not change with the page's 640x480 window.
 // Its output is copied to stdout. The exit status is the game's own.
 //
+// The IWAD goes in as it is (brief 03): the page's raw=1 hook puts --iwad's file into /work under its own name, with no
+// checks, no hashing and no IndexedDB, as before the page had a data loader. These tests compare the simulation; the
+// loader (download, SHA-256, cache, picker) has its own tests, tests/web/data.js.
+//
 // Test pacing (the page's fast=1): the game yields to the page every 20 ms instead of once per
 // display frame, so -timedemo runs as fast as the CPU allows, as it did before ASYNCIFY.
 //
