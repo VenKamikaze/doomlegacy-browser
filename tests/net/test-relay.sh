@@ -221,6 +221,12 @@ PY
         t_check "${who^^} exchanged tics with the dedicated server through the relay (${recv:-0} datagrams received)" test "${recv:-0}" -ge 500
     done
     fi
+    if [ "$bots" = 1 ]; then
+        for who in s a b; do
+            t_check "$who: the log says there were 2 bots in the game" \
+                grep -q "TEST: bots in game: 2 " "$t_tmp/$label-$who/out.txt"
+        done
+    fi
     if grep -qiE "$faults" "$sdir/out.txt" "$adir/out.txt" "$bdir/out.txt"; then
         t_bad "no consistency fault, repair, kick or vnet failure in any log"
         grep -iE "$faults" "$sdir/out.txt" "$adir/out.txt" "$bdir/out.txt" | head -5

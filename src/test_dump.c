@@ -356,6 +356,7 @@ static uint32_t hash_players( void )
         byte frac, tics;
         line_begin( "botglobals %d", 0 );
         F( oksector, sector_num( oksector ) );
+        F( grid, B_Grid_Hash() );   // every machine must have built the same node grid
         if( B_Get_speed_state( &frac, &tics ) )
         {
             F( speedfrac, frac );  F( runtics, tics );
@@ -381,9 +382,13 @@ static void hash_mobj( int ord, const mobj_t * mo )
 #ifdef MOBJ_HAS_FLAGS3
     F( flags3, mo->flags3 );
 #endif
-    // The colour translation (MFT_TRANSLATION6) is how the renderer paints a player: it
-    // follows the player's colour setting, which a loaded or joined game sends again
-    // (a bot's colour from the server's own table), and nothing in the game reads it.
+    // The colour translation (MFT_TRANSLATION6) is how the renderer paints a player. A load
+    // sends a bot's colour again from the local botinfo table, and in a single-player
+    // -testload that table differs from run to run, so the mask keeps those runs
+    // comparable. It does hide a real state change: skincolor, which teamplay "Color"
+    // reads (ST_SameTeam). In a netgame every machine gets the same NameColor xcmd from
+    // the server, so a join does not part on it (bugs.md L49). skincolor itself is not
+    // hashed for the same reason.
     F( tflags, mo->tflags & ~MFT_TRANSLATION6 );  F( eflags, mo->eflags );
     F( special1, mo->special1 );  F( special2, mo->special2 );
     F( health, mo->health );
@@ -940,7 +945,21 @@ void TestDump_Tic( void )
         addbots_count = 0;
     }
     if( testdump_active )
+    {
+        // How many bots are in the game, printed when it changes: the tests that add bots
+        // check that they did (a test that lost its bots would pass as a game without).
+        static int  last_bots = -1;
+        int  nb = 0, k;
+        for( k = 0; k < MAXPLAYERS; k++ )
+            if( playeringame[k] && players[k].bot )  nb++;
+        if( nb != last_bots && gamestate == GS_LEVEL )
+        {
+            last_bots = nb;
+            printf( "TEST: bots in game: %d at gametic %u\n", nb, (unsigned) gametic );
+            fflush( stdout );
+        }
         record_tic();
+    }
     if( census_on )
         census_tic();
     for( i = 0; i < num_testsave; i++ )

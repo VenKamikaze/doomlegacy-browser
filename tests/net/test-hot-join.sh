@@ -8,13 +8,13 @@
 #   tests/net/test-hot-join.sh --bin FILE      # another game binary (e.g. the ASan build)
 #   tests/net/test-hot-join.sh --keep DIR      # keep the logs and dumps in DIR
 #   tests/net/test-hot-join.sh --no-force      # natural join timing: no -testunpausedelay, no applied-pause check (not in the default run; run it too)
-#   tests/net/test-hot-join.sh --bots          # also add a bot (FAILS today: bots are not restored by the join, bugs.md L23)
+#   tests/net/test-hot-join.sh --bots          # also add two bots with long names (bugs.md L23, L24): the join must carry them
 #   tests/net/test-hot-join.sh --state N       # also write the text state (-teststate N) of tic N on both machines
 #   tests/net/test-hot-join.sh --join-after N  # seconds of play before the client starts (default 10)
 #   tests/net/test-hot-join.sh --play N        # seconds of game time to compare after the join (default 40)
 #
 # The server runs Freedoom 1 E1M1 headless (dummy video, no sound) with the level's monsters
-# (and a bot with --bots), and writes a -testdump file. After --join-after seconds
+# (and two bots with --bots), and writes a -testdump file. After --join-after seconds
 # a client starts with -connect 127.0.0.1, receives the savegame and plays on; it
 # writes a -testdump file too. Real time, 35 tics a second, so a run takes about
 # --join-after + --play + start-up seconds, then the script stops both instances.
@@ -159,6 +159,13 @@ PY
     set -- $act
     echo "  activity: $1 distinct P_Random states, $2 distinct world states in the client's file"
     check "the game was not idle (>= 20 random states, >= 3 world states)" $([ "${1:-0}" -ge 20 ] && [ "${2:-0}" -ge 3 ] && echo 0 || echo 1)
+fi
+if [ "${#bots[@]}" -gt 0 ]; then
+    # the game must really have had the bots (a test that lost them would pass as a game without)
+    for who in s c; do
+        check "$who: the log says there were 2 bots in the game" \
+            $(grep -q "TEST: bots in game: 2 " "$work/$who/out.txt" && echo 0 || echo 1)
+    done
 fi
 faults='consistency (fault|failure)|desync|out of sync|Client repair|Report: gametic|Kick (node|player)|savegame failed|Can.t load the level'
 if grep -qiE "$faults" "$work/s/out.txt" "$work/c/out.txt" 2>/dev/null; then
