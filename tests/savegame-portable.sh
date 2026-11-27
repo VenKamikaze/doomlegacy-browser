@@ -5,7 +5,7 @@
 # plays on the same on both (brief F2, acceptance 1 to 3).
 #
 #   tests/savegame-portable.sh                # all cases
-#   tests/savegame-portable.sh --only d1demo3 # cases whose demo name matches (grep -E)
+#   tests/savegame-portable.sh --only d1demo3 # cases whose demo name matches (grep -E); "bots" is the game with bots
 #   tests/savegame-portable.sh --full         # also load every wasm-written save (see below)
 #   tests/savegame-portable.sh --jobs 3       # runs at once (default 3: one core each)
 #   tests/savegame-portable.sh --keep         # keep the work directory and print it
@@ -167,7 +167,7 @@ sel=()
 for c in "${cases[@]}"; do
     echo "${c%%:*}" | grep -Eq "$only" && sel+=("$c")
 done
-[ ${#sel[@]} -gt 0 ] || { echo "no cases match '$only'" >&2; exit 2; }
+echo "bots" | grep -Eq "$only" || [ ${#sel[@]} -gt 0 ] || { echo "no cases match '$only'" >&2; exit 2; }
 
 save_run() {   # save_run DEMO TICS WHICH
     local demo="$1" tics="$2" which="$3" dir="$work/save/$1/$3" iwad args="" t last=0 gets=()
@@ -186,7 +186,7 @@ export work root native wasmdir
 
 list=()
 for c in "${sel[@]}"; do d="${c%%:*}"; t="${c#*:}"; list+=("$d $t native" "$d $t wasm"); done
-printf '%s\n' "${list[@]}" | xargs -P "$jobs" -L 1 bash -c 'save_run "$@"' _
+[ ${#list[@]} -eq 0 ] || printf '%s\n' "${list[@]}" | xargs -P "$jobs" -L 1 bash -c 'save_run "$@"' _
 
 # ---- stage 2: the loads (AC3) ----
 load_run() {   # load_run DEMO TIC WRITER LOADER
@@ -217,7 +217,7 @@ for c in "${sel[@]}"; do
         first=0
     done
 done
-printf '%s\n' "${loads[@]}" | xargs -P "$jobs" -L 1 bash -c 'load_run "$@"' _
+[ ${#loads[@]} -eq 0 ] || printf '%s\n' "${loads[@]}" | xargs -P "$jobs" -L 1 bash -c 'load_run "$@"' _
 
 # ---- the checks ----
 echo
@@ -282,6 +282,85 @@ for c in "${sel[@]}"; do
         first=0
     done
 done
+
+# ---- stage 3: a game with bots (brief F3, AC3 and AC4) ----
+# Freedoom 1 E1M3, skill 4, two bots with long names added at tic 10, no human input, -nodraw.
+# The saves at tics 1300 and 1700 hold bots with timers, a destination and a path (the census
+# line "bot-path-node"). Checked:
+#   - saving changes nothing: the game that wrote two saves and the same game that wrote none
+#     have identical -testdump files for all 2,800 tics (1,100 after the last save);
+#   - the same save from native and from wasm, byte for byte, and the saving games' files identical;
+#   - each save loaded by native and by wasm (no demo: a plain single-player game): the two
+#     files of the 1,100 tics after the load identical, and the first record (the state as
+#     loaded, the bots' whole state included) equal to the record of the saving game at the save tic;
+#   - the saves hold what is wanted: at least one with a bot path.
+if echo "bots" | grep -Eq "$only"; then
+    echo
+    echo "== bots: AC3 (saving changes nothing) and AC4 (same save, same state as loaded)"
+    bargs=(-skill 4 -warp 1 3 +botgen 1 +botrandseed 136 -testaddbots 10 2 -nodraw)
+    bsave=(-testsave 1300 s1300.sav -testsave 1700 s1700.sav)
+    bdir="$work/bots"
+    run_native "$bdir/nsave" "$iw1" -- "${bargs[@]}" -testdump o.bin "${bsave[@]}" -testquit 2800 &
+    run_native "$bdir/nplain" "$iw1" -- "${bargs[@]}" -testdump o.bin -testquit 2800 &
+    run_wasm "$bdir/wsave" "$iw1" --get o.bin=o.bin --get s1300.sav=s1300.sav --get s1700.sav=s1700.sav \
+        -- "${bargs[@]}" -testdump o.bin "${bsave[@]}" -testquit 2800 &
+    wait
+    for d in nsave nplain wsave; do
+        [ "$(cat "$bdir/$d/exit" 2>/dev/null)" = 0 ] && ok "bots: the $d run exited 0" || bad "bots: the $d run exited $(cat "$bdir/$d/exit" 2>/dev/null)"
+    done
+    if info="$(python3 -I "$diffpy" "$bdir/nsave/o.bin" "$bdir/nplain/o.bin")"; then
+        ok "AC3 bots: the game that saved twice and the game that did not have identical files: $info"
+    else
+        bad "AC3 bots: saving changed the game: $info"
+    fi
+    nrec="$(python3 -I "$diffpy" --info "$bdir/nsave/o.bin" | sed 's/ records.*//')"
+    [ "$nrec" -ge $((1700 + mintics)) ] && ok "AC3 bots: $nrec records, at least $mintics after the last save" \
+        || bad "AC3 bots: only $nrec records"
+    if info="$(python3 -I "$diffpy" "$bdir/nsave/o.bin" "$bdir/wsave/o.bin")"; then
+        ok "bots: the saving games' files are identical, native and wasm: $info"
+    else
+        bad "bots: the saving games differ, native and wasm: $info"
+    fi
+    pathnodes=0
+    for t in 1300 1700; do
+        nsaves=$((nsaves+1))
+        hs="$(grep -a '^TEST: save holds' "$bdir/nsave/out.txt" | sed -n "$([ $t = 1300 ] && echo 1 || echo 2)p" | sed 's/^TEST: save holds: //')"
+        echo "   save at tic $t holds: $(printf '%s\n' "$hs" | tr ' ' '\n' | paste -d= - - | grep -v '=0$' | tr '\n' ' ')"
+        pathnodes=$((pathnodes + $(printf '%s' "$hs" | sed -n 's/.*bot-path-node \([0-9]*\).*/\1/p')))
+        if [ -s "$bdir/nsave/s$t.sav" ] && cmp -s "$bdir/nsave/s$t.sav" "$bdir/wsave/s$t.sav"; then
+            ok "AC4 bots: native save == wasm save, byte for byte ($(stat -c %s "$bdir/nsave/s$t.sav") bytes)"
+        else
+            bad "AC4 bots: the saves at tic $t differ or are missing"
+        fi
+    done
+    [ "$pathnodes" -gt 0 ] && ok "bots: the saves hold bot paths ($pathnodes nodes)" \
+        || bad "bots: no save holds a bot path: the test would not see a lost path"
+    bload() {  # bload TIC LOADER
+        local t="$1" l="$2" dir="$bdir/load-$1-$2"
+        if [ "$l" = native ]; then
+            run_native "$dir" "$iw1" "$bdir/nsave/s$t.sav" -- -nodraw -testload "s$t.sav" -testdump L.bin -testquit "$playtics"
+        else
+            run_wasm "$dir" "$iw1" --put "$bdir/nsave/s$t.sav" --get L.bin=L.bin \
+                -- -nodraw -testload "s$t.sav" -testdump L.bin -testquit "$playtics"
+        fi
+    }
+    for t in 1300 1700; do bload $t native & bload $t wasm & wait; done
+    for t in 1300 1700; do
+        ln="$bdir/load-$t-native"; lw="$bdir/load-$t-wasm"
+        if [ "$(cat "$ln/exit" 2>/dev/null)" != 0 ] || [ "$(cat "$lw/exit" 2>/dev/null)" != 0 ]; then
+            bad "AC4 bots: a loading run of the save at $t failed"; continue
+        fi
+        info="$(python3 -I "$diffpy" "$ln/L.bin" "$lw/L.bin")" && r=0 || r=1
+        n="$(python3 -I "$diffpy" --info "$ln/L.bin" | sed 's/ records.*//')"
+        if [ $r = 0 ] && [ "$n" -ge "$mintics" ]; then ok "AC4 bots: save at $t loaded by native and by wasm play on identically: $info"
+        else bad "AC4 bots: save at $t, native load and wasm load differ or are short ($n records): $info"; fi
+        for l in native wasm; do
+            info="$(python3 -I "$atpy" "$bdir/nsave/o.bin" "$t" "$bdir/load-$t-$l/L.bin" first)" \
+                && ok "AC4 bots: state as loaded by $l == state at tic $t when saved (bots included): $info" \
+                || bad "AC4 bots: state as loaded by $l != state at tic $t when saved: $info"
+        done
+    done
+fi
 
 echo
 echo "savegame-portable: $pass passed, $fail failed, $nsaves saves, $(( $(date +%s) - start )) s"

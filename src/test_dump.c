@@ -328,7 +328,10 @@ static uint32_t hash_players( void )
         F( cheats, pl->cheats );
         F( damagecount, pl->damagecount );
         F( bonuscount, pl->bonuscount );
-        F( specialsector, pl->specialsector );
+        // Not hashed: specialsector. P_PlayerInSpecialSector sets it every tic and nothing
+        // reads it but the text of a death message (p_inter.c:1852); a savegame does not
+        // hold it, so a player standing in a nukage sector has 0 until its next tic
+        // (bugs.md L44).
         F( skin, pl->skin );
         F( bot, pl->bot != NULL );
 #ifdef SG_BOT_STATE
