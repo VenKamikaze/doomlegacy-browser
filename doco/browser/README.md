@@ -20,7 +20,7 @@ The goal is Doom Legacy playable in a browser (Emscripten/WASM), **with its musi
 | 00 | [Baseline, state hash and code facts](00-baseline.md): native and wasm builds without `-ffast-math`, a per-tic state hash (`-testdump`) compared native against wasm, a hot-join test over UDP, ASan with recovery, [`code-facts.md`](code-facts.md) | done |
 | 01 | [vnet transport (native)](01-vnet-transport.md): `i_vnet.c` fills the driver table; `-relay HOST:PORT` with `-server`/`-connect CODE`; three native players and a join in progress through a local relay, with impairment | done, 26 Nov 2026 (AC4 narrowed to latency only by the user; the full impairment is F4) |
 | F2 | [Portable savegame between x86_64 and wasm32](F2-portable-savegame.md) (`bugs.md` L19, L30) | done, 26 Nov 2026 (also fixes L36 to L40, five more things a savegame lost; L43 logged) |
-| F3 | [Bots and joining a game in progress](F3-bots-hot-join.md) (`bugs.md` L23, L24) | in progress |
+| F3 | [Bots and joining a game in progress](F3-bots-hot-join.md) (`bugs.md` L23, L24; also L45, L46) | implemented, 27 Nov 2026; awaiting review |
 | F4 | Joining a game in progress over a lossy or reordering link (`bugs.md` L31, L35): `PT_STATE` sequence number, the cause of L35, brief 01's AC4 at its full values | queued, before 04 |
 
 ## Settled decisions

@@ -65,11 +65,14 @@ A game with bots can be joined in progress and stays in step on every machine, t
 - **Size the `Command_AddBot` buffer** for the longest name and its terminator, for example `byte buf[2 + MAXPLAYERNAME + 1]`.
 - **Bound the player number** in `P_UnArchive_Bots` (`>=`, and abort the load as other loader errors do) and in `Got_NetXCmd_AddBot` (ignore the command and warn). These are small and sit in the code you are changing. The rest of L43 stays out of scope.
 
-### 3. Native against wasm bots (measure, don't fix)
+### 3. Native against wasm bots (measure first, then make them the same)
+
+**Changed by the user's decision of 27 Nov 2026:** the brief first said to measure and stop. The user allowed changes of bot behaviour (bots are a feature of this port, not of Doom). So: measure on the unchanged bot code and report; then replace the libm `atan` of `B_AimWeapon` by a deterministic integer or table version (the engine's `tantoangle`), keep the aim close and report the largest difference; then the native-against-wasm comparison on the new code must be identical, and it is an acceptance check. The same for any other libm call or float on a per-tic path. Demo compatibility may break if stated in the docs (the user, the same day).
 
 - **Run the same bot game on both builds** and compare the `-testdump` records tic by tic. Use one or two bots in a level with monsters, so that they aim and shoot, from the same start, with no human input, for at least 35 × 60 tics. A demo is no good for this: during playback the demo's ticcmds replace the bot's (`g_game.c:1765-1767`), so a different aim would never show.
-- **Report the first tic where they differ, if any, and what differs.** If they differ, trace it to its cause: `atan` in `B_AimWeapon`, the node grid's floats, or something else. Then stop and report with the options. Don't change the bot simulation in this brief.
+- **Report the first tic where they differ, if any, and what differs.** If they differ, trace it to its cause: `atan` in `B_AimWeapon`, the node grid's floats, or something else.
 - If they agree, say how often the bots aimed (how many `atan` calls in the run), so we know the test reached the code.
+- Then change the aim (see above) and rerun on the new code; the script prints the number of aims.
 
 ### 4. Tests
 
@@ -82,7 +85,7 @@ A game with bots can be joined in progress and stays in step on every machine, t
 
 ## Out of scope
 
-- **Changing how bots think or aim,** including replacing `atan`. Item 3 only measures.
+- **Changing how bots think or aim** beyond what item 3 and the determinism of the state need (the user's decision of 27 Nov 2026 allows the changes that item 3 makes, not a redesign).
 - **The rest of L43** (sector, line and inventory indices).
 - **L29** (a slow joiner), **L31 and L35** (a lossy link, F4).
 - **Bot names and colours** from `rand()` (`cv_bot_gen == 4`, outside `G_Ticker`), unless the audit shows they reach the game state.
@@ -98,7 +101,7 @@ A game with bots can be joined in progress and stays in step on every machine, t
    - old saves load, as in-scope item 1 says;
    - `tests/savegame-portable.sh` and `tests/savegame-old.sh` pass.
 5. **L24 is fixed.** On `claudeai` before this chunk, adding a bot with a long name aborts the server ("stack smashing detected"), or the ASan build reports it. On the change, it doesn't. Show both.
-6. **Native against wasm bots:** measured and reported, as in-scope item 3 says. This criterion is the report. A difference is not a failure of this brief, but it stops the brief before any fix.
+6. **Native against wasm bots** (changed by the user's decision of 27 Nov 2026; before, this criterion was the report of a measurement, and a difference stopped the brief): measured on the unchanged bot code and reported; then, with the aim from the table, `tests/bots-native-wasm.sh` must give identical files for at least 35 × 60 tics with at least 100 aims, and must fail when the two builds differ (shown with libm `atan` put back in the native build only). The largest difference in aim from the old code is reported. `tests/demo-hash.sh` stays 11 of 11.
 7. **Nothing else changed:**
    - `tests/demo-hash.sh` 11 of 11;
    - `tests/draw-independence.sh`;
@@ -128,9 +131,62 @@ A game with bots can be joined in progress and stays in step on every machine, t
 - **Blocked hosts:** report a blocked host; don't work around it.
 - **Stop and report** if the fix needs any of these:
   - a change to the network protocol beyond the savegame;
-  - a change to how bots think;
-  - a difference between native and wasm bots (item 3).
+  - (removed by the user on 27 Nov 2026: a change to how bots think, and a difference between native and wasm bots; item 3 now fixes the second.)
 
 ## Outcome
 
-Status: **in progress.**
+Status: **implemented, 27 Nov 2026; awaiting review.** All eight criteria pass. Two scope changes by the user on 27 Nov 2026 came in the middle of the work (bot behaviour may change; demo compatibility may break if the docs say so): see "Decisions for the coordinator". The bot-state work found two things the brief did not name (the address in `regulate()`, `oksector`: `bugs.md` L45, L46) that the join could not have carried.
+
+**What landed** (commits on the branch, in order)
+- `9c50bd8` L24 and the two player numbers, in upstream's style, alone: `byte buf[2 + MAXPLAYERNAME + 1]`; `Got_NetXCmd_AddBot` skips the command with a warning for a number of `MAXPLAYERS` or more; `P_UnArchive_Bots` tests `>=` and aborts the load.
+- `742d270` `regulate()` in `b_look.c` takes the player number, not the address of the mobj (L45). A change of bot behaviour, alone.
+- `3ea7743` the savegame holds a bot's whole state: section `SYNC_botstate`, `oksector` saved and reset at level start (L46); `B_forget_stuff` is out of the save path.
+- `f1534b2` the state hash holds the bots; `-testaddbots`; `tests/net/test-hot-join.sh --bots`, `tests/net/test-relay.sh --bots`.
+- `e631aa2` bot aiming without libm: `B_Slope_Angle` from `tantoangle` (user's decision of 27 Nov 2026). A change of bot behaviour, alone (the counters and `BOT_AIM_COMPARE` of the measurement are in it).
+- the next commits: `tests/bots-native-wasm.sh`; the bots stage of `tests/savegame-portable.sh`; the hash leaves out `specialsector` (L44) and the colour translation of `tflags`; the line numbers of `tests/asan-known.txt`; the docs.
+
+**The audit** (what a bot's decisions read, and what each does now; the same table is in `code-facts.md` §8)
+- Saved before and still: skill, `lastNumWeapons`, flags, what, turn timer, the eight mobj pointers; `B_Random`'s index (misc section).
+- Lost before, saved now (32 bits each): `blockedcount`, `avoidtimer`, `strafetimer`, `weaponchangetimer`, `runtimer`, `lastMobjX`, `lastMobjY`.
+- `destNode` and the path: were cleared on the saving machine by `B_forget_stuff` (saving changed the saving game) and empty on the joiner; now saved as grid coordinates (rebuilt on load, bounds checked), nothing is forgotten when saving. `B_forget_stuff` stays, unused.
+- `oksector` (`b_node.c`): kept between path queries, never saved, stale across levels (L46): saved, and NULL at every level start.
+- `regulate()`: the address of the bot's mobj (L45): the player number.
+- `atan` in `B_AimWeapon`: libm: `tantoangle` and integers.
+- `SearchNode_t` scratch (`visited`, `cost`, `f`, `heuristic`, `pprevious`): not state: each is set when a node is first pushed in a search before anything reads it, `visited` is reset for all nodes after each search. `heapArray[size]` read by `B_PQTrickleDown` is always a slot written earlier in the same search.
+- Statics: `bot_speed_frac` and `bot_run_tics` are set again for each bot with the default speed `botskill` (scratch; hashed otherwise); `bot_looker_mobj`, `bot_dest_mobj`, `bot_last_sector`, `last_s`, `bot_door_found`, `bot_tele_dest_found`, `botteledestx/y`, `botteletype` are set at the start of each query. The node grid is built at level start from lines and sectors alone (`players[0].mo` is NULL then), the same everywhere. Bots run in player-number order; `botinfo` (names, colours) is the server's own and never reaches a ticcmd.
+- **Not changed, open:** a pointer a bot holds to a mobj that was removed (an item another player picked up) dangles until the bot looks again. No run showed it. The loader makes it NULL.
+
+**Versioning choice.** No new version number (the portable version stays 10149): the state is an optional section after the bots, so a savegame without bots is F2's bytes. F2's build reading an F3 savegame with bots stops at the new sync byte ("Legacy save game sync error", "Can't load the level"): refused, never misread. F3 reading an F2 savegame (file or join) loads it with the new fields empty. `code-facts.md` §8.
+
+**Native against wasm bots** (E1M3 of Freedoom 1, skill 4, two bots with 9-letter names added at tic 10, no human input, `-nodraw`, 2,800 tics, both builds at once, `tests/bots-native-wasm.sh`)
+- On the unchanged bot code (pre-F3 `b_look.c` and `atan`): **different, first difference at tic 111** (random state, players), before any `atan`: the address in `regulate()` (L45). The atan counts also differ (573 and 687).
+- With L45 fixed and libm `atan` still in both builds: **identical, 2,800 records, 779 `atan` calls, the same hash of all 64 bits of every result.** So glibc and Emscripten's `atan` agreed on this run; it is not proof for all inputs.
+- With `B_Slope_Angle` (the change the user allowed): **identical, 2,800 records, 779 aims, same hash of the aim values.** Largest difference from the libm aim over three runs of two bots (E1M1: 36 aims, E1M2: 699, E1M3: 779): **5 units of the 65,536 per turn of `cmd.aiming` (0.03 degree)** (1 unit on E1M1, 5 on E1M2 and E1M3).
+- Failure proof: libm `atan` put back in the native build only: first difference at **tic 101**, aim hashes `44dcf61d` against `6083667b`.
+- No other libm call or float is on a bot's per-tic path (`b_look.c`, `b_search.c`, `b_game.c`: grepped). The node grid's `float` and `ceil` agree on both builds (the runs above are identical, grid included).
+
+**Tests and numbers** (all on this machine, 4 cores, one test at a time)
+- `tests/net/test-hot-join.sh --bots` (two bots with long names, state hashed): default 56 s, `--together` 45 s, `--no-force` 57 s, all PASS; also `--join-after 25 --play 60` PASS (2,144 identical records, tics 887 to 3030). The bot-less runs in the three modes: PASS, 56, 45, 57 s. Identical records, default: 1,439 (tics 360 to 1798).
+- `tests/net/test-relay.sh --bots` (server, A from the start, B joins in progress, bots with long names): 3 of 3 PASS (136 s for three runs; later 45 s once more). `tests/net/test-relay.sh` (clean and impaired): PASS 95 s. `tests/net/test-relay-errors.sh`: PASS 143 s.
+- `tests/savegame-portable.sh`: AC1 sizes, 7 demos with 12 saves, and the bots stage: all pass (116 checks, 573 s on the first full run, which also showed the colour translation, below; the bots stage alone passes 3 of 3 afterwards, 147 s each). The stage: the game that wrote two saves and the game that wrote none, 2,800 identical records (1,100 after the last save); saves at tic 1300 and 1700 (19,179 and 19,718 bytes) byte for byte the same on native and wasm; they hold 2 bots and 201 path nodes between them (one with a destination); each loaded by native and by wasm plays on 1,100 identical tics; the first record equals the saver's.
+- `tests/savegame-old.sh`: PASS, 130 s (it builds the pre-F2 tree with this `test_dump.c`). The F2 build (`bc6df14`) saves still load (no section: bots start empty).
+- `tests/bots-native-wasm.sh`: identical, 2,800 records, 779 aims, 83 s.
+- `tests/demo-hash.sh`: 11 of 11 (284 s; again after the last change to the hash, see below). `tests/draw-independence.sh` PASS 92 s. `tests/sprite-column-oob.sh` PASS 61 s. `tests/asan-demos.sh --rebuild`: 53 sites, all known, 0 new, after renumbering nine `p_saveg.c` lines in `tests/asan-known.txt` (the same nine sites: shifts of negative values and `1 << i`); its hot-join ASan run still diverges at a slow client (L29, reports only).
+
+**Failure proofs (AC8)** (throwaway patches, reverted; builds in `build/<name>`)
+- Before the chunk (`bc6df14`), three machines with bots: the server aborts at tic 10 with "stack smashing detected" (L24; `+botgen 1 +botrandseed 136` names of 9 letters). With only L24 and L45 applied to it, the three-machine test fails: server and A agree, B differs from its first tic (360) and is kicked at tic 474.
+- `weaponchangetimer` dropped from the save: `test-hot-join.sh --bots` fails at tic 361 with "Consistency failure" in the log; the bots stage of `savegame-portable.sh` fails (the state as loaded differs from the saver's at tic 1300).
+- `B_forget_stuff` back in the save path: `test-relay.sh --bots` fails in 2 of 3 runs (B differs at tic 365; 3 of 6 runs over two batches); the bots stage fails "saving changed the game: first difference at tic 1301". Server and A stay the same in these runs (a forgotten path is mostly found again the same way); the failures are B's.
+- `byte buf[10]` back: `test-hot-join.sh --bots` ends in 3 s, "stack smashing detected".
+- Pointer in `regulate()` back: `--bots` hot join fails at tic 361 (the first tic after the load); native against wasm, tic 111.
+- libm `atan` in the native build only: tic 101 (above).
+- Each shown on the build named; the checks that failed are the ones named.
+
+**Decisions for the coordinator**
+1. **Changes of bot behaviour, by the user's decision of 27 Nov 2026**, each in a commit of its own: `regulate()` uses the player number instead of an address (needed: without it a bot game cannot be the same on two machines, and `--bots` fails at the first tic); the aim comes from `tantoangle` (at most 5 of 65,536 units from `atan`); `oksector` is saved and reset at a level start.
+2. **Demo compatibility is broken for demos recorded with bots, stated in `bugs.md` L47 and `building.md`.** During playback `G_Ticker` still runs the bots, then replaces the ticcmd (`g_game.c:1765-1767`); `B_Random` and the bot code's own changes to the game (zeroing the bot's momentum at an edge, `damagecount`, `MF_JUSTHIT`) stay. A demo with bots recorded on the pre-F3 build (E1M3, skill 4, 1,600 tics): played twice on that build, the files differ from tic 12 (it did not reproduce even before); on the F3 build they differ from tic 12 too. So bot demos were already not reproducible, and are not now. The 11 demos have no bots and are unchanged: `tests/demo-hash.sh` 11 of 11. I'll leave the README's settled decisions to you.
+3. **The three-machine check sees the join's own state more easily than the forgetting.** With the save-time forget back, the server and A stay in step in every run I made; B parts. The brief's expected failure (the server parting from a player already there) did not show, as the brief allowed for ("a forgotten path never changed a ticcmd"); I did not find a run where it does. I report it rather than weakening the check.
+4. **`+addbot` on the command line makes the host a bot** (L48), which is why the old `--bots` test was never a test of a human host. The tests add bots with `-testaddbots TIC N` (test-only, `src/test_dump.c`).
+5. **The hash leaves out `specialsector` (L44, not saved) and the colour translation bits of `tflags`** (a loaded game re-sends the bots' colours from a table that differs from run to run; found when one savegame loaded twice differed at tic 4). Both are cosmetic or message-text only. The 11 demos still agree native against wasm.
+6. **Open, not changed:** bots keep pointers to mobjs that were removed. An F2 build joining an F3 server with bots is refused with a sync error rather than a version message. The rest of L43 and L29 are untouched.
+7. The F3 build's `-testsave` and the old build's (`bc6df14`) were used as `old` and `old2` in the scratchpad with a copy of this tree's `test_dump.c`; nothing of them is committed.
