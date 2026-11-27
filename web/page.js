@@ -17,6 +17,7 @@
 //   files=URL,...    fetched into the game's working directory /work before the game starts
 //   persist=0        no IndexedDB: config and saved games are in memory (the control run)
 //   home=DIR         the game's -home (default /persist, the IndexedDB folder)
+//   nolock=1         never lock the pointer (headless Chromium stalls the page for 100 ms to 3 s at a time while it is locked)
 //   fast=1           test pacing: yield without waiting for a display frame (src/sdl/i_web.c)
 //   fastms=N         ... at most every N ms (default 20)
 //   audio=dummy      SDL's dummy audio driver
@@ -24,6 +25,7 @@
 //                    window), as the runner did before the page existed
 //   nofetch=1        do not fetch the IWAD, though the game is told where it would be (a missing IWAD)
 //   Module.dlYields  each yield: [the game gave control away, the page resumed it, the game was running again]
+//   window.dlMouse   mouse movements seen on the page (all, while locked, their sum)
 //   window.dlTest    FS, readFile, writeFile, listFiles, syncNow; window.dlOut and dlErr (the game's
 //                    output), window.dlExit ({code}), window.dlState, Module.dlFrameLog (when the game
 //                    presented a frame, performance.now())
@@ -36,6 +38,7 @@
   var HOME_DIR = (TEST && params.get('home')) || '/persist';
   var WORK_DIR = '/work';
   var CLOSE_DELAY_MS = 10;
+  var NOLOCK = TEST && params.get('nolock') === '1';
 
   var canvas = document.getElementById('canvas');
   var overlay = document.getElementById('overlay');
@@ -84,13 +87,15 @@
   var errLines = [];
   function capped(arr, max) { if (arr.length > max) { arr.splice(0, max / 2); } return arr; }
 
-  // The game ended with an error: its own words, from stderr ("Error: ..." and the lines after it, or the
-  // last warnings, which say what could not be found).
+  // The game ended with an error: its own words, from stderr: the "Error: ..." line and the few lines before it, which
+  // say what could not be found ("Warn: IWAD ... not found").
   function gameWords() {
     var i = -1;
     for (var k = errLines.length - 1; k >= 0; k--) { if (/^Error: /.test(errLines[k])) { i = k; break; } }
-    var lines = i >= 0 ? errLines.slice(i, i + 6) : errLines.filter(function (l) { return /^Warn: /.test(l); }).slice(-4);
-    return lines.map(function (l) { return l.replace(/^(Error|Warn): /, ''); }).filter(Boolean).join('\n');
+    if (i < 0) { return ''; }
+    // what it could not find: the last few lines before the error that say so (the rest is the search list)
+    var why = errLines.slice(Math.max(0, i - 40), i).filter(function (l) { return /^Warn: |not found|Does not have|Cannot|Couldn't|can't/i.test(l); }).slice(-3);
+    return why.concat(errLines[i]).map(function (l) { return l.replace(/^(Error|Warn): /, ''); }).filter(function (l) { return /\S/.test(l); }).join('\n');
   }
 
   var Module = {
@@ -375,14 +380,27 @@
 
   // ---- Keys the browser would use -----------------------------------------------------------------------
 
-  // While the game runs, the keys it uses must not scroll or navigate the page: arrows, space, Tab, Backspace,
-  // page keys and F1 to F4 and F6 to F10. F5 (reload), F11 and F12 (full screen, developer tools) stay the
-  // browser's; so does anything with Alt or Meta held (Alt+Left is "back"). Ctrl is the game's fire key.
-  var GAME_KEYS = /^(Arrow(Up|Down|Left|Right)|Space|Tab|Backspace|Page(Up|Down)|Home|End|Quote|Slash|F([1-4]|[6-9]|10))$/;
-  window.addEventListener('keydown', function (e) {
-    if (running && GAME_KEYS.test(e.code) && !e.altKey && !e.metaKey) { e.preventDefault(); }
-    if (e.code === 'Escape') { lastEscape = performance.now(); }
-  }, true);
+  // While the game runs, the keys it uses must not scroll or navigate the page: arrows, Space, Tab, Backspace,
+  // page keys and F1 to F4 and F6 to F10, also with Alt held (Alt+Left is "back"; Alt is the game's strafe key).
+  // F5 (reload), F11 and F12 (full screen, developer tools) stay the browser's. Ctrl is the game's fire key.
+  // Not the keys that type text (Space, ' and /): preventing the default of their keydown stops the browser's
+  // keypress, and with it SDL's text input (a space typed in the console or in a saved game's name). Those are
+  // stopped at keypress, which is where Firefox starts its quick find and where a page scrolls on Space.
+  var GAME_KEYS = /^(Arrow(Up|Down|Left|Right)|Tab|Backspace|Page(Up|Down)|Home|End|F([1-4]|[6-9]|10))$/;
+  // SDL keeps the default of every key it handles, which would take F5, F11, F12 and Ctrl+R from the browser: those
+  // never reach it.
+  function browserKey(e) {
+    return e.code === 'F5' || e.code === 'F11' || e.code === 'F12' || ((e.ctrlKey || e.metaKey) && (e.code === 'KeyR' || e.code === 'KeyL'));
+  }
+  ['keydown', 'keyup', 'keypress'].forEach(function (type) {
+    window.addEventListener(type, function (e) {
+      if (!running) { return; }
+      if (type !== 'keypress' && browserKey(e)) { e.stopImmediatePropagation(); return; }
+      if (type === 'keydown' && GAME_KEYS.test(e.code)) { e.preventDefault(); }
+      if (type === 'keypress' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); }
+    }, true);
+  });
+  window.addEventListener('keydown', function (e) { if (e.code === 'Escape') { lastEscape = performance.now(); } }, true);
 
   // ---- Escape and the mouse ---------------------------------------------------------------------------
 
@@ -436,17 +454,36 @@
     setTimeout(function () { window.dispatchEvent(new KeyboardEvent('keyup', init)); }, 100);
   });
 
-  // The game gets relative motion only while the pointer is locked. While SDL thinks the pointer is free it
-  // turns every mousemove, mouseenter and mouseleave on the canvas into an absolute position and reports the
-  // jump as relative motion, which would turn the player's view: pass those events to SDL only while it has
-  // been told of the lock (our own copy of the last pointerlockchange: SDL's can come after the event).
-  var sdlSeesLock = false;
-  document.addEventListener('pointerlockchange', function () { sdlSeesLock = !!document.pointerLockElement; });
-  ['mousemove', 'mouseenter', 'mouseleave'].forEach(function (type) {
-    window.addEventListener(type, function (e) {
-      if (e.target !== canvas || (sdlSeesLock && document.pointerLockElement === canvas)) { return; }
-      e.stopPropagation();
-    }, true);
+  // The mouse. The game wants it (Module.dlMouseGrab(true), from I_GrabMouse in src/sdl/i_system.c) while a level plays
+  // and not in a menu. The page then locks the pointer: at once if the player's last key press or click is recent (the
+  // browser only allows it then), else at the next click on the picture. While it is locked, each movement goes to the
+  // game (dl_mouse_motion). SDL's own mouse mode is not used (src/sdl/i_web.c says why); SDL gets no mouse movement,
+  // only the buttons.
+  var wantGrab = false;
+  function tryLock() {
+    if (!wantGrab || !running || document.pointerLockElement || NOLOCK) { return; }
+    if (navigator.userActivation && !navigator.userActivation.isActive) { return; }    // the next click will do
+    canvas.requestPointerLock();
+  }
+  Module.dlMouseGrab = function (on) {
+    wantGrab = !!on;
+    if (wantGrab) { tryLock(); } else if (document.pointerLockElement) { document.exitPointerLock(); }
+  };
+  window.addEventListener('mousedown', function () { tryLock(); }, true);
+  var carryX = 0, carryY = 0;
+  window.addEventListener('mousemove', function (e) {
+    var locked = document.pointerLockElement === canvas || (TEST && window.dlTest && window.dlTest.passMouse === true);   // (passMouse: a test's sabotage)
+    if (e.target === canvas || locked) { e.stopImmediatePropagation(); }
+    if (TEST) { var m = window.dlMouse || (window.dlMouse = { moves: 0, lockedMoves: 0, dx: 0, dy: 0 }); m.moves++; if (locked) { m.lockedMoves++; m.dx += e.movementX; m.dy += e.movementY; } }
+    if (!locked || !running || !Module._dl_mouse_motion) { return; }
+    // movementX can be fractional: keep what the whole numbers leave
+    carryX += e.movementX; carryY += e.movementY;
+    var dx = Math.trunc(carryX), dy = Math.trunc(carryY);
+    carryX -= dx; carryY -= dy;
+    if (dx || dy) { Module._dl_mouse_motion(dx, dy); }
+  }, true);
+  ['mouseenter', 'mouseleave'].forEach(function (type) {
+    window.addEventListener(type, function (e) { if (e.target === canvas) { e.stopImmediatePropagation(); } }, true);
   });
 
   // ---- Test hooks -------------------------------------------------------------------------------------

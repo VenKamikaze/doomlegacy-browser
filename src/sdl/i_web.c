@@ -18,9 +18,39 @@
 
 #ifdef __EMSCRIPTEN__
 
+// The game's headers first: doomtype.h declares its own true and false, which <stdbool.h> (in emscripten.h) redefines.
+#include "doomincl.h"
+#include "d_event.h"
+#include "d_main.h"
+#include "g_input.h"
+#include "i_web.h"
 #include <emscripten.h>
 #include <SDL.h>
-#include "i_web.h"
+
+// The mouse. SDL's own relative mouse mode (SDL_SetRelativeMouseMode) is not used: with it on, the page's
+// frames stalled for 100 ms to 3 s at a time in headless Chromium (the cause was not found; bugs.md L55). The
+// page locks the pointer itself, when the game wants the mouse and the player clicks, and calls
+// dl_mouse_motion() with the movement. Nothing else of SDL's mouse is used for motion.
+EM_JS(void, dl_mouse_grab, (int on), { if (Module.dlMouseGrab) { Module.dlMouseGrab(!!on); } });
+
+void I_Web_MouseGrab( int on )
+{
+    dl_mouse_grab( on );
+}
+
+// Called by the page for each mouse movement while the pointer is locked.
+EMSCRIPTEN_KEEPALIVE
+void dl_mouse_motion( int dx, int dy )
+{
+    event_t  event;
+    if( ! cv_usemouse[0].EV )
+        return;
+    event.type = ev_mouse;
+    event.data1 = 0;
+    event.data2 = dx << 2;     // as the relative branch of I_GetEvent
+    event.data3 = - (dy << 2); // y is negated: screen + is down, map + is up
+    D_PostEvent( &event );
+}
 
 #ifdef DL_NO_ASYNCIFY
 // A build for measuring the size of ASYNCIFY only (scripts/wasm.mk NOASYNC=1): no

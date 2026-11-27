@@ -542,12 +542,7 @@ void I_GetEvent(void)
               // [WDJ] 8/2012 Some problems with Absolute mouse motion in OpenBSD.
               // Could not predict which would work best for a particular port,
               // so both are here, selected from mouse menu.
-#ifdef __EMSCRIPTEN__
-              // A page gets relative motion from pointer lock (I_GrabMouse).
-              if( 1 )
-#else
               if( cv_mouse_motion.value )
-#endif
               {
                   // Relative mouse motion interface.
                   // Seems to be used by prboom and some other SDL Doom ports.
@@ -595,11 +590,7 @@ void I_GetEvent(void)
               // Known to work on Linux, OpenBSD, and Windows.
               // Absolute mouse motion requires WarpMouse centering always.
               // Keyboard will be affected by grabinput, independently of this.
-#ifdef __EMSCRIPTEN__
-              if( 0 )  // pointer lock gives relative motion: no warping
-#else
               if( (cv_mouse_motion.value==0) || ! cv_grabinput.value )
-#endif
 #endif
               {
                   static byte lastmouse_warp = 0;
@@ -825,9 +816,7 @@ static void I_GrabMouse(void)
          SDL_SetWindowGrab( sdl_window, 1 );
       }
 #ifdef __EMSCRIPTEN__
-      // Pointer lock: SDL asks the browser at the next click; motion arrives as
-      // relative motion.
-      SDL_SetRelativeMouseMode( SDL_TRUE );
+      I_Web_MouseGrab( 1 );  // the page takes the pointer (pointer lock) and sends the motion
 #endif
 #else
       // SDL 1.2	  
@@ -848,7 +837,7 @@ void I_UngrabMouse(void)
       SDL_SetWindowGrab( sdl_window, 0 );
   }
 #ifdef __EMSCRIPTEN__
-  SDL_SetRelativeMouseMode( SDL_FALSE );
+  I_Web_MouseGrab( 0 );
 #endif
 #else
   if(SDL_GRAB_ON == SDL_WM_GrabInput(SDL_GRAB_QUERY))

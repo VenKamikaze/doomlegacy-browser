@@ -20,6 +20,7 @@ void I_Web_Poll( void );        // from the event pump: yield if the game has no
 void I_Web_PassEnd( void );     // end of a pass of D_DoomLoop: wait for a frame unless one was just waited for
 void I_Web_Idle( void );        // inside a loop that waits for the clock: let the page run for a moment
 void I_Web_Sleep( unsigned int ms );  // I_Sleep
+void I_Web_MouseGrab( int on ); // the game wants the mouse (a level is playing): the page locks the pointer and sends the motion
 
 #else
 
@@ -28,6 +29,7 @@ void I_Web_Sleep( unsigned int ms );  // I_Sleep
 #define I_Web_Poll()      ((void)0)
 #define I_Web_PassEnd()   ((void)0)
 #define I_Web_Idle()      ((void)0)
+#define I_Web_MouseGrab(on) ((void)0)
 
 #endif
 
