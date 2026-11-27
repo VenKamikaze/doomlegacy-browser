@@ -30,7 +30,8 @@ function dataMounts() {
 function serve(root, mounts, port) {
   const all = Object.assign(dataMounts(), mounts || {});
   const server = http.createServer((req, res) => {
-    const url = decodeURIComponent(req.url.split('?')[0]);
+    let url;
+    try { url = decodeURIComponent(req.url.split('?')[0]); } catch (e) { res.writeHead(400); res.end('bad url'); return; }
     let file = all[url];
     if (!file) {
       const rel = path.normalize(url === '/' ? '/index.html' : url);

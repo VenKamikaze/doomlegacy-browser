@@ -9,6 +9,7 @@
 //   SMOKE_SABOTAGE=nokey node tests/web/smoke.js    # sends no key: the keyboard checks must FAIL
 //   SMOKE_SABOTAGE=noesc node tests/web/smoke.js    # the pointer is released the way the game does it: the Escape check must FAIL
 //   SMOKE_SABOTAGE=nosound node tests/web/smoke.js  # silences the audio output: the sound check must FAIL
+//   SMOKE_SABOTAGE=lateaudio node tests/web/smoke.js  # SDL makes the AudioContext, as before the fix: the in-the-click check must FAIL
 //   SMOKE_SABOTAGE=nomouse node tests/web/smoke.js  # the mouse does not move: the mouse-look check must FAIL
 //   SMOKE_SHOT=file.png                             # also save a screenshot of the page
 //
@@ -89,11 +90,18 @@ async function main() {
     }
 
     // --- 2. The game: title, menu, keys, frames, sound ---------------------------------------------------
-    const o = await t.open(env, '?test=1&persist=0');      // the real audio device: no audio=dummy
+    const o = await t.open(env, '?test=1&persist=0' + (SAB === 'lateaudio' ? '&noprime=1' : ''));      // the real audio device: no audio=dummy
     const { page, context, errors, consoleErrors } = o;
     // Sound that reaches the audio output: SDL feeds a ScriptProcessorNode; watch the loudest sample it writes.
     await page.addInitScript((silence) => {
       window.audioPeak = 0;
+      // Where the AudioContext is made: inside the click on "Click to start" or not.
+      window.audioCtxs = [];
+      let inClick = false;
+      window.addEventListener('click', (e) => { if (e.target && e.target.id === 'start') { inClick = true; setTimeout(() => { inClick = false; }, 0); } }, true);
+      const RealAC = window.AudioContext;
+      window.AudioContext = function (...a) { const c = new RealAC(...a); window.audioCtxs.push({ ctx: c, inClick }); return c; };
+      window.AudioContext.prototype = RealAC.prototype;
       const real = AudioContext.prototype.createScriptProcessor;
       AudioContext.prototype.createScriptProcessor = function () {
         const node = real.apply(this, arguments);
@@ -171,6 +179,9 @@ async function main() {
     const a2 = await audio();
     t.check(a1 && a1.open && a1.state === 'running', `the game opened its audio device and the AudioContext is running (${a1 && a1.state})`);
     t.check(a1 && a2 && a2.time > a1.time, 'the audio clock advances');
+    const ac = await page.evaluate(() => ({ n: window.audioCtxs.length, inClick: window.audioCtxs.map((c) => c.inClick), same: !!(window.audioCtxs[0] && Module.SDL2 && Module.SDL2.audioContext === window.audioCtxs[0].ctx) }));
+    t.check(ac.n === 1 && ac.inClick[0] === true, `the AudioContext was created inside the click on "Click to start" (${ac.n} created; inside the click: ${JSON.stringify(ac.inClick)})`);
+    t.check(ac.same, 'SDL uses that context (Module.SDL2.audioContext is the one the page made)');
     if (SAB !== 'nokey') { await t.tap(page, 'ArrowDown'); }       // the menu moves with a sound
     await page.waitForTimeout(600);
     const peak = await page.evaluate(() => window.audioPeak);
@@ -181,15 +192,15 @@ async function main() {
     const prevented = await page.evaluate(() => {
       const r = {};
       const send = (type, code) => { const e = new KeyboardEvent(type, { code, key: code, bubbles: true, cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
-      for (const code of ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Tab', 'Backspace', 'PageUp', 'F1', 'F2', 'F3', 'F4', 'F6', 'F7', 'F8', 'F9', 'F10', 'F5', 'F11', 'F12']) { r[code] = send('keydown', code); }
+      for (const code of ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Tab', 'Backspace', 'PageUp', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12']) { r[code] = send('keydown', code); }
       // keys that type text: their keydown is left alone (SDL needs the keypress that follows), the keypress is stopped
       for (const code of ['Space', 'Quote', 'Slash']) { r[code] = send('keypress', code) && !send('keydown', code); }
       return r;
     });
-    const mine = ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Space', 'Quote', 'Slash', 'Tab', 'Backspace', 'PageUp', 'F1', 'F2', 'F3', 'F4', 'F6', 'F7', 'F8', 'F9', 'F10'];
+    const mine = ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Space', 'Quote', 'Slash', 'Tab', 'Backspace', 'PageUp', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11'];
     const miss = mine.filter((k) => !prevented[k]);
     t.check(miss.length === 0, `the browser's default is prevented for the keys the game uses (${miss.length ? 'not for ' + miss.join(', ') : mine.length + ' keys'})`);
-    t.check(!prevented.F5 && !prevented.F11 && !prevented.F12, 'F5, F11 and F12 stay the browser\'s');
+    t.check(!prevented.F12, 'F12 stays the browser\'s (developer tools)');
 
     t.check((await page.evaluate(() => window.dlState)) === 'running', 'the game is still running');
     t.check(errors.length === 0, 'no uncaught page error, dialog or alert', errors.join(' | '));

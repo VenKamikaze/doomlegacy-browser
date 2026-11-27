@@ -37,9 +37,10 @@ async function stop(env) {
 }
 
 // Opens the page; collects uncaught page errors and dialogs. Returns { page, context, errors, console }.
-async function open(env, query, opts) {
+async function open(env, query, opts, init) {
   const context = await env.browser.newContext(Object.assign({ viewport: { width: 1000, height: 800 } }, opts || {}));
   const page = await context.newPage();
+  if (init) { await page.addInitScript(init); }
   const errors = [];
   const consoleErrors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
@@ -128,7 +129,7 @@ function pct(sorted, p) { return sorted[Math.min(sorted.length - 1, Math.floor(p
 // returns { page, context, errors, state, exit, out, err, seconds }.
 async function runGame(env, query, opts) {
   opts = opts || {};
-  const o = await open(env, '?test=1&' + query);
+  const o = await open(env, '?test=1&' + query, undefined, opts.init);
   await waitState(o.page, ['ready', 'error']);
   const started = Date.now();
   if ((await o.page.evaluate(() => window.dlState)) === 'ready') { await o.page.click('#start'); }

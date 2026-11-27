@@ -8,7 +8,7 @@
 // Parts follow jfsw-browser's page (the user's own work, GPL): the click-to-start overlay, the
 // Escape handling under pointer lock, the IDBFS sync queue.
 //
-//   ?iwad=URL     the IWAD to fetch (default freedoom1.wad next to the page). A dev loader; brief 03
+//   ?iwad=URL     the IWAD to fetch, same origin only (default freedoom1.wad next to the page). A dev loader; brief 03
 //                 replaces it with the real download and cache.
 //   ?test=1       test hooks, below
 //
@@ -204,8 +204,8 @@
 
   function run() {
     writing = true;
-    lastSignature = persistSignature();
-    current = syncfs(false).then(function () { window.dlSyncs++; writing = false; },
+    var sig = persistSignature();
+    current = syncfs(false).then(function () { lastSignature = sig; window.dlSyncs++; writing = false; },
       function (e) { writing = false; console.warn('Saving to the browser failed:', e); throw e; });
     return current;
   }
@@ -277,7 +277,14 @@
     }, function (e) { throw new Error(label + ': could not fetch ' + url + ' (' + describe(e) + ')'); });
   }
 
-  function iwadUrl() { return params.get('iwad') || 'freedoom1.wad'; }
+  // Until brief 03 replaces this loader, only the page's own origin (the IWAD next to it).
+  function iwadUrl() {
+    var u = params.get('iwad') || 'freedoom1.wad';
+    var o = '';
+    try { o = new URL(u, location.href).origin; } catch (e) { throw new Error('?iwad= is not a URL: ' + u); }
+    if (o !== location.origin) { throw new Error('?iwad= must be on the same origin as the page (' + location.origin + '); ' + u + ' is on ' + o + '.'); }
+    return u;
+  }
   function iwadName() {
     var n = '';
     try { n = decodeURIComponent(new URL(iwadUrl(), location.href).pathname.split('/').pop()); } catch (e) { /* below */ }
@@ -338,6 +345,22 @@
     return a.concat(extra.split(/\s+/).filter(Boolean));
   }
 
+  // The audio must start inside the click. callMain returns at the game's first yield, and SDL opens its audio device
+  // many yields (hundreds of ms) later, outside the click: it would only work through the browser's "sticky" activation
+  // and SDL's resume timer. So the page makes the AudioContext here, in the click, and hands it to SDL, which uses
+  // Module.SDL2.audioContext when it is there (SDL_emscriptenaudio.c). test hook: ?noprime=1 leaves it to SDL.
+  function primeAudio() {
+    if (TEST && (params.get('noprime') === '1' || params.get('audio') === 'dummy')) { return; }
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) { return; }
+    try {
+      var ctx = new AC();
+      if (ctx.state === 'suspended') { ctx.resume().catch(function () {}); }
+      Module.SDL2 = Module.SDL2 || {};
+      Module.SDL2.audioContext = ctx;
+    } catch (e) { console.warn('could not create the audio context in the click:', e); }
+  }
+
   function start() {
     if (running || ended || window.dlState !== 'ready') { return; }
     startBtn.hidden = true;
@@ -347,8 +370,8 @@
     setState('running');
     canvas.focus();
     fit();
+    primeAudio();
     try {
-      // The click is the user gesture that lets the game open its audio device.
       Module.callMain(gameArgs());
     } catch (e) {
       if (e === 'unwind') { return; }                       // ASYNCIFY suspended main, as it should
@@ -381,16 +404,16 @@
   // ---- Keys the browser would use -----------------------------------------------------------------------
 
   // While the game runs, the keys it uses must not scroll or navigate the page: arrows, Space, Tab, Backspace,
-  // page keys and F1 to F4 and F6 to F10, also with Alt held (Alt+Left is "back"; Alt is the game's strafe key).
-  // F5 (reload), F11 and F12 (full screen, developer tools) stay the browser's. Ctrl is the game's fire key.
+  // page keys and F1 to F11 (F5 reloads and F11 is full screen in a browser, and both are game keys), also with Alt held
+  // (Alt+Left is "back"; Alt is the game's strafe key). F12 (developer tools) and Ctrl+R, Ctrl+L stay the browser's.
+  // Ctrl is the game's fire key.
   // Not the keys that type text (Space, ' and /): preventing the default of their keydown stops the browser's
   // keypress, and with it SDL's text input (a space typed in the console or in a saved game's name). Those are
   // stopped at keypress, which is where Firefox starts its quick find and where a page scrolls on Space.
-  var GAME_KEYS = /^(Arrow(Up|Down|Left|Right)|Tab|Backspace|Page(Up|Down)|Home|End|F([1-4]|[6-9]|10))$/;
-  // SDL keeps the default of every key it handles, which would take F5, F11, F12 and Ctrl+R from the browser: those
-  // never reach it.
+  var GAME_KEYS = /^(Arrow(Up|Down|Left|Right)|Tab|Backspace|Page(Up|Down)|Home|End|F([1-9]|10|11))$/;
+  // SDL keeps the default of every key it handles, which would take F12 and Ctrl+R from the browser: those never reach it.
   function browserKey(e) {
-    return e.code === 'F5' || e.code === 'F11' || e.code === 'F12' || ((e.ctrlKey || e.metaKey) && (e.code === 'KeyR' || e.code === 'KeyL'));
+    return e.code === 'F12' || ((e.ctrlKey || e.metaKey) && (e.code === 'KeyR' || e.code === 'KeyL'));
   }
   ['keydown', 'keyup', 'keypress'].forEach(function (type) {
     window.addEventListener(type, function (e) {

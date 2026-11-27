@@ -68,6 +68,16 @@ LDFLAGS  := $(OPTLEV) $(SDLFLAGS) -sSTACK_SIZE=2097152 -sINITIAL_MEMORY=13421772
   -sMODULARIZE=1 -sEXPORT_NAME=createDoomLegacy -sINVOKE_RUN=0 \
   -sEXPORTED_RUNTIME_METHODS=FS,ENV,callMain,IDBFS -lidbfs.js $(ASYNCFLAGS) $(EXTRA_LDFLAGS)
 
+.DEFAULT_GOAL := all
+
+# Changing NOASYNC or EXTRA_LDFLAGS must rebuild what depends on them: a stamp that changes with them.
+FLAGS_STAMP := $(BUILD)/flags.stamp
+$(FLAGS_STAMP): FORCE
+	@mkdir -p $(dir $@)
+	@printf '%s\n' 'NOASYNC=$(NOASYNC) EXTRA_LDFLAGS=$(EXTRA_LDFLAGS)' | cmp -s - $@ || printf '%s\n' 'NOASYNC=$(NOASYNC) EXTRA_LDFLAGS=$(EXTRA_LDFLAGS)' > $@
+FORCE:
+$(BUILD)/objs/sdl/i_web.o: $(FLAGS_STAMP)
+
 TARGET := $(BUILD)/bin/doomlegacy.js
 PAGE   := index.html page.js page.css
 SITE   := $(addprefix $(BUILD)/bin/,$(PAGE) legacy.wad)
@@ -82,7 +92,7 @@ $(BUILD)/bin/%: web/%
 	@mkdir -p $(dir $@)
 	cp $< $@
 
-$(TARGET): $(OBJS) scripts/wasm.mk
+$(TARGET): $(OBJS) scripts/wasm.mk $(FLAGS_STAMP)
 	@mkdir -p $(dir $@)
 	$(CC) $(OBJS) $(LDFLAGS) -o $@
 
@@ -94,4 +104,4 @@ clean:
 	rm -rf $(BUILD)
 
 -include $(OBJS:.o=.d)
-.PHONY: all clean
+.PHONY: all clean FORCE

@@ -5,8 +5,11 @@
 //
 // Two ways to wait:
 //   normal   the page's pace. A frame waits for requestAnimationFrame (100 ms at
-//            most: a hidden tab gets no frames), so the game runs in step with the
-//            display and the page stays responsive. This is what users get.
+//            most), so the game runs in step with the display and the page stays
+//            responsive. This is what users get. In a hidden tab SDL clears
+//            SDL_WINDOW_SHOWN, so I_FinishUpdate returns before I_Web_Frame; the only
+//            wait left is I_Web_PassEnd's, a 100 ms timer that Chrome throttles to 1 s
+//            or more (bugs.md L59).
 //   fast     test only (the page's ?test=1&fast=1, Module.dlFast): a yield is a
 //            message to the page itself, and it happens only when 20 ms (default,
 //            Module.dlFastMs) have passed since the last one. The tests play
@@ -27,10 +30,10 @@
 #include <emscripten.h>
 #include <SDL.h>
 
-// The mouse. SDL's own relative mouse mode (SDL_SetRelativeMouseMode) is not used: with it on, the page's
-// frames stalled for 100 ms to 3 s at a time in headless Chromium (the cause was not found; bugs.md L55). The
-// page locks the pointer itself, when the game wants the mouse and the player clicks, and calls
-// dl_mouse_motion() with the movement. Nothing else of SDL's mouse is used for motion.
+// The mouse. SDL's own relative mouse mode (SDL_SetRelativeMouseMode) is not used: the page locks the pointer
+// itself, when the game wants the mouse and the player clicks, and calls dl_mouse_motion() with the movement.
+// Nothing else of SDL's mouse is used for motion. (Not for speed: any locked pointer, SDL's or the page's, stalls
+// headless Chromium's frames for 100 ms to 3 s at a time; bugs.md L58.)
 EM_JS(void, dl_mouse_grab, (int on), { if (Module.dlMouseGrab) { Module.dlMouseGrab(!!on); } });
 
 void I_Web_MouseGrab( int on )
