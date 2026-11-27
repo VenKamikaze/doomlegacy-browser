@@ -70,6 +70,7 @@
 #include "i_vnet.h"
 #include "m_swap.h"
 #include "z_zone.h"
+#include "i_web.h"
 
 //
 // NETWORKING
@@ -859,7 +860,7 @@ void Net_Wait_AllAckReceived( uint32_t timeout )
     HGetPacket();
     while( !Net_Test_AllAckReceived() )
     {
-        while(ct == I_GetTime()) { }  // wait for next tic
+        while(ct == I_GetTime()) { I_Web_Idle(); }  // wait for next tic
         HGetPacket();
         Net_AckTicker();
         ct = I_GetTime();

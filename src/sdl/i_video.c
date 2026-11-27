@@ -93,6 +93,7 @@ static int testbpp = 0;
 #include "console.h"
 #include "hwsym_sdl.h" // For dynamic referencing of HW rendering functions
 #include "ogl_sdl.h"
+#include "i_web.h"
 
 
 //Hudler: 16/10/99: added for OpenGL gamma correction
@@ -409,6 +410,7 @@ void I_FinishUpdate(void)
         OglSdl_FinishUpdate();
     }
 
+    I_Web_Frame();  // browser: wait for the next display frame (nothing elsewhere)
     I_GetEvent();
 
     return;

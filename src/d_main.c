@@ -271,6 +271,7 @@
 
 #include "b_game.h"
 #include "test_dump.h"
+#include "i_web.h"
   //added by AC for acbot
 
 #ifdef FRENCH_INLINE
@@ -1008,6 +1009,8 @@ void D_Display(void)
         {
             nowtime = I_GetTime();
             tics = nowtime - wipestart;
+            if( !tics )
+                I_Web_Idle();  // browser: do not spin on the clock
         } while (!tics);
         wipestart = nowtime;
         wipe_done = wipe_ScreenWipe(cv_screenslink.value - 1, tics);
@@ -1156,6 +1159,8 @@ void D_DoomLoop(void)
             HW3S_EndFrameUpdate();
 #endif
         }
+
+        I_Web_PassEnd();  // browser: give the page its turn, a frame at a time (L7)
     }
 }
 
@@ -3019,6 +3024,11 @@ fatal_error_action:
         // [WDJ] Invoke built-in launcher command line
         if ( fatal_error )
         {
+#ifdef __EMSCRIPTEN__
+            // A page has no launcher to go on to (L18): end the game, and the page
+            // shows the messages above.
+            I_Error( "Cannot start the game. See the warnings above.\n" );
+#endif
             CONS_Printf("Fatal error display: (press ESC to continue).\n");
             con_destlines = BASEVIDHEIGHT;
             do
@@ -3692,8 +3702,10 @@ void D_Quit_Save ( quit_severity_e severity )
     if( quitseq < 20 )
     {
         quitseq = 20;
+#ifndef __EMSCRIPTEN__  // the page shows the messages and ends the game itself
         if( severity != QUIT_normal )
             I_Sleep( 3000 );  // to see some messages
+#endif
         vid.draw_ready = 0;        
         I_ShutdownGraphics();
         HU_Release_Graphics();

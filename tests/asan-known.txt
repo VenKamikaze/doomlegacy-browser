@@ -6,7 +6,7 @@ global-buffer-overflow p_enemy.c:504 in CV_monster_OnChange L26
 global-buffer-overflow r_segs.c:2448 in R_RenderSegLoop L8
 ubsan g_game.c:2206:17 left shift of negative value N L10
 ubsan g_game.c:2207:17 left shift of negative value N L10
-ubsan i_system.c:575:68 left shift of negative value N L10
+ubsan i_system.c:578:68 left shift of negative value N L10
 ubsan p_enemy.c:2377:27 left shift of N by N places cannot be represented in type 'int' L10
 ubsan p_enemy.c:2378:48 left shift of N by N places cannot be represented in type 'int' L10
 ubsan p_enemy.c:2675:11 signed integer overflow: N + N cannot be represented in type 'int' L27

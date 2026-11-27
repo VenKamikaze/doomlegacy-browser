@@ -101,6 +101,7 @@
 #include "keys.h"
 #include "i_joy.h"
 #include "m_argv.h"
+#include "i_web.h"
 
 
 // MOUSE2_NIX dependent upon DoomLegacy headers.
@@ -447,6 +448,8 @@ void I_GetEvent(void)
 #endif
 
   event_t event;
+
+  I_Web_Poll();  // browser: yield if the game has not for a few ms (nothing elsewhere)
 
 #ifdef MOUSE2_NIX
   if( mouse2_started )
@@ -812,6 +815,9 @@ static void I_GrabMouse(void)
       {
          SDL_SetWindowGrab( sdl_window, 1 );
       }
+#ifdef __EMSCRIPTEN__
+      I_Web_MouseGrab( 1 );  // the page takes the pointer (pointer lock) and sends the motion
+#endif
 #else
       // SDL 1.2	  
       if(SDL_GRAB_OFF == SDL_WM_GrabInput(SDL_GRAB_QUERY))
@@ -830,6 +836,9 @@ void I_UngrabMouse(void)
   {
       SDL_SetWindowGrab( sdl_window, 0 );
   }
+#ifdef __EMSCRIPTEN__
+  I_Web_MouseGrab( 0 );
+#endif
 #else
   if(SDL_GRAB_ON == SDL_WM_GrabInput(SDL_GRAB_QUERY))
   {
@@ -850,7 +859,10 @@ void I_StartupMouse( boolean play_mode )
     if( cv_usemouse[0].EV && play_mode )
     {
         // Enable mouse containment during play.
+#ifndef __EMSCRIPTEN__
         SDL_Event inputEvent;
+#endif
+#ifndef __EMSCRIPTEN__  // a page has no warping: pointer lock gives relative motion
         // warp to center
 #ifdef SDL2
         SDL_WarpMouseInWindow( sdl_window, vid_center_x, vid_center_y);
@@ -859,6 +871,7 @@ void I_StartupMouse( boolean play_mode )
 #endif
         // remove the mouse event by reading the queue
         SDL_PollEvent(&inputEvent);
+#endif
 
         // Guard band at window border: 20%=51, 25%=64, 30%=76
         mouse_x_min = (vid.width * 64) >> 8;
@@ -950,6 +963,7 @@ static void I_ShutdownJoystick(void)
 void I_SysInit(void)
 {
   CONS_Printf("Initializing SDL...\n");
+  I_Web_Init();  // browser build: before SDL_Init
 
   // Initialize Audio as well, otherwise DirectX can not use audio
   if( SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_JOYSTICK) != 0 )
@@ -1559,7 +1573,11 @@ tic_t I_GetTime(void)
 // in milleseconds
 void I_Sleep(unsigned int ms)
 {
+#ifdef __EMSCRIPTEN__
+  I_Web_Sleep(ms);  // lets the page run
+#else
   SDL_Delay(ms);
+#endif
 }
 
 
