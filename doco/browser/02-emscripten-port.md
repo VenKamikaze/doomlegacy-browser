@@ -159,7 +159,7 @@ The wasm tests must not become much slower. Today they run `-timedemo` as fast a
 
 ## Outcome
 
-Status: **done by the implementer, 27 Nov 2026** (branch `browser/02-emscripten-port`; the coordinator reviews, and a person plays it in Chromium and Firefox: AC9). Single-player Freedoom runs in a page that stays responsive, with keyboard, mouse, sound effects, and a config and savegames that survive a reload. `tests/demo-hash.sh` 11 of 11, `tests/savegame-portable.sh` 117 of 117 and `tests/bots-native-wasm.sh` identical on the ASYNCIFY build; the demo tests run within 5 percent of their old time. Not tested: Firefox (not in the container), a real GPU, a real sound card or mouse, a person playing, music (off: M1).
+Status: **done, 27 Nov 2026; the play-test (AC9) is pending** (merged into `claudeai`; a person plays it in Chromium and Firefox). Single-player Freedoom runs in a page that stays responsive, with keyboard, mouse, sound effects, and a config and savegames that survive a reload. `tests/demo-hash.sh` 11 of 11, `tests/savegame-portable.sh` 117 of 117 and `tests/bots-native-wasm.sh` identical on the ASYNCIFY build; the demo tests run within 5 percent of their old time. Not tested: Firefox (not in the container), a real GPU, a real sound card or mouse, a person playing, music (off: M1).
 
 **What landed**
 
@@ -235,8 +235,8 @@ Status: **done by the implementer, 27 Nov 2026** (branch `browser/02-emscripten-
 **Play-test steps** (Arch Linux, pacman)
 
 ```
-sudo pacman -S --needed base-devel git unzip python nodejs npm
-git clone --recurse-submodules -b browser/02-emscripten-port https://github.com/VenKamikaze/doomlegacy-browser
+sudo pacman -S --needed base-devel git unzip python nodejs npm chromium firefox
+git clone --recurse-submodules -b claudeai https://github.com/VenKamikaze/doomlegacy-browser
 cd doomlegacy-browser
 scripts/setup-emsdk.sh --with-ports       # Emscripten 6.0.13 and its ports, about 300 MB, into ~/.cache/doomlegacy-browser/emsdk
 scripts/build-wasm.sh                     # about a minute the first time
@@ -263,3 +263,30 @@ Open it in Chromium, then in Firefox. Click "Click to start". Escape opens the m
 - `page.js`: `lastSignature` is set only after the IDBFS write succeeds, so the safety net retries. `?iwad=` is same-origin only; `exits.js` case 6 (another origin) ends with "must be on the same origin". `serve.js` answers 400 for an undecodable URL. `scripts/wasm.mk` has a flags stamp (`NOASYNC`, `EXTRA_LDFLAGS`): changing them rebuilds `i_web.o` and relinks (checked: NOASYNC=1, again, then without: 108, 0, 2 compiler runs).
 - `EXITS_SABOTAGE=silent` now applies to every case (an init script makes `Module.onExit` do nothing): the 4 cases that end through `onExit` fail, 10 checks (6 passed, 10 failed); the two page-level errors do not go through it.
 - **Counts after the round:** `smoke.js` 36 of 36, `exits.js` 16 of 16, `persist.js` 12 of 12, `demo-page.js` 11 of 11, `demo-hash.sh --only 'd1demo3|fd2demo1'` 3 of 3 identical, `bots-native-wasm.sh` identical (2,800 records, 557 aims).
+
+**Review and coordinator verification (27 Nov 2026)**
+
+- Independent review of 0691cab..3b2913a: no blockers; 11 findings (4 documentation, 7 small), all addressed in fix round 1 (746c860) or logged (L61). Re-review of the fix round: all resolved, merge as is. The reviewer confirmed by running them that the L55 and L18 changes are needed (with them reverted, `persist.js` fails 4 checks and `exits.js` 7) and that the yields are sound: no JavaScript-to-wasm entry point can reach a yield, and every change to an existing file is under `__EMSCRIPTEN__` or a macro that is empty natively.
+- Two nits from the re-review, left as they are: `fetch` of `?iwad=` follows redirects, so an open redirect on the page's own origin could still fetch a WAD from elsewhere (brief 03 replaces the loader; `redirect: 'error'` would close it); and `smoke.js` checks that F5 and F11 are kept from the browser, not that the game reacts to them (the play-test does).
+- Coordinator verification at 746c860, every test one at a time after a clean rebuild:
+
+| Test | Result | Time |
+|---|---|---|
+| builds: native `--clean`, wasm clean, relay | rc 0 | 13 s, 14 s, 1 s |
+| fresh clone, empty `EM_CACHE`, `setup-emsdk.sh --with-ports` and `build-wasm.sh` | rc 0, no download | 38 s |
+| `bots-native-wasm.sh` | identical, 2,800 records, 557 aims | 83 s |
+| `bots-level-start.sh` | pass | 21 s |
+| `savegame-malformed.sh` | 8 of 8 | 56 s |
+| `savegame-portable.sh` | 117 of 117 | 581 s |
+| `savegame-old.sh` | 12 of 12 | 132 s |
+| `test-hot-join.sh`, three modes, with and without `--bots` | 6 of 6 pass | 45-57 s each |
+| `test-relay.sh`; `--bots --runs 3`; `test-relay-errors.sh` | pass; pass; pass | 95 s, 284 s, 143 s |
+| `sprite-column-oob.sh`, `draw-independence.sh` | pass, pass | 60 s, 93 s |
+| `demo-hash.sh` | 11 of 11 | 358 s |
+| `tests/web/smoke.js` | 36 of 36 | 33 s |
+| `tests/web/demo-page.js` | 11 of 11 (page dump = native, 2,134 records) | 96 s |
+| `tests/web/persist.js` | 12 of 12 | 71 s |
+| `tests/web/exits.js` | 16 of 16 | 12 s |
+| `asan-demos.sh --rebuild` | 53 known, 0 new | 264 s |
+
+  The hot-join run inside `asan-demos.sh` prints FAIL (first difference at tic 436), as it did at F3: that is L29 (a slow joiner diverges, for brief 04); only its sanitizer reports count there.
