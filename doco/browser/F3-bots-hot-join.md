@@ -230,3 +230,10 @@ Commits: `a54f34d` (grid, level start, rounded aim, `regulate`), `7045548` (load
 
 **Open decision for the coordinator:** `tests/net/test-hot-join.sh` (with or without bots) fails in about 1 run in 10 for cause 2 (L54), so a single red run of it is not by itself a regression of F3; F4 should take it with L31 and L35.
 
+### Fix round 4 (27 Nov 2026)
+
+- **`tests/bots-level-start.sh` is strict.** The state hash looks a pointer up by address in the new level's thinkers, and the new level reuses the memory the old one freed, so a stale pointer can read as live. With `-testdump`, `B_Level_Start` now prints "TEST: bots at level start: N bots, P pointers, D destinations, S path nodes" when it is done (`TestDump_BotsAtLevelStart`), and the test requires `3 bots, 0, 0, 0` for the last call, the new level's. The earlier checks stay. PASS, 21 s. **Failure proof:** `B_Level_Start` cut down to `B_forget_stuff` (destination and path only): "3 bots, 4 pointers, 0 destinations, 0 path nodes", FAIL, 21 s (the hash-based check also failed, with 4 pointers read as not live; the new line does not depend on that).
+- **Docs:** `bugs.md` L25 no longer says nothing reads `bob_momx` and `bob_momy` (L53 does); L53 says plainly that a human's frame phase can differ for as long as they keep running, that games without bots are not fixed (the bob is saved only with bots, so a bot-less save stays F2's bytes) and that it is open for F4; `code-facts.md` §8: the path length bound is `numbotnodes`, and the bob entries and the loader's checks are listed.
+- **Savegames of the earlier rounds.** Saves written by earlier commits of this unmerged branch (rounds 1 and 2) have an older layout of `SYNC_botstate` (no bob entries); nothing in the savegame marks the layout (the version is still 10149). The current loader reads such a save as if the first bot record were the bob count and refuses it cleanly ("bad bot state") in the reviewer's test; they are not meant to be kept. Nothing was released with that layout.
+- Single-process tests only, as asked: `tests/bots-level-start.sh`. No hot-join or relay test was run in this round.
+
