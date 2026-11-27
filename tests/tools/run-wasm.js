@@ -76,7 +76,7 @@ async function main() {
     page.on('pageerror', (e) => process.stdout.write('pageerror: ' + e.message + '\n'));
     page.on('crash', () => { process.stdout.write('run-wasm: the page crashed\n'); });
     const query = new URLSearchParams({
-      test: '1', persist: '0', home: '/work', audio: 'dummy', video: 'native', nolock: '1', iwad: '/data/' + path.basename(opts.iwad),
+      test: '1', persist: '0', home: '/work', audio: 'dummy', video: 'native', nolock: '1', raw: '1', iwad: '/data/' + path.basename(opts.iwad),
       files: dataFiles.filter((f) => f.src !== opts.iwad).map((f) => '/data/' + encodeURIComponent(f.name)).join(','),
       args: JSON.stringify(['-nosound', ...game]),
     });

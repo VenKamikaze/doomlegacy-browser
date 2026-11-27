@@ -130,7 +130,7 @@ function pct(sorted, p) { return sorted[Math.min(sorted.length - 1, Math.floor(p
 async function runGame(env, query, opts) {
   opts = opts || {};
   const o = await open(env, '?test=1&' + query, undefined, opts.init);
-  await waitState(o.page, ['ready', 'error']);
+  await waitState(o.page, ['ready', 'nodata', 'error']);
   const started = Date.now();
   if ((await o.page.evaluate(() => window.dlState)) === 'ready') { await o.page.click('#start'); }
   if (opts.script) { await opts.script(o.page); }

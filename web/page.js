@@ -8,8 +8,11 @@
 // Parts follow jfsw-browser's page (the user's own work, GPL): the click-to-start overlay, the
 // Escape handling under pointer lock, the IDBFS sync queue.
 //
-//   ?iwad=URL     the IWAD to fetch, same origin only (default freedoom1.wad next to the page). A dev loader; brief 03
-//                 replaces it with the real download and cache.
+// The game data (brief 03): config.js says where it is (default doom1.wad next to the page, D14), data.js downloads it
+// with progress, checks it, keeps it in IndexedDB (its own database) and offers "Use your own copy" (a file picker).
+//
+//   ?iwad=URL     the IWAD to use instead of config.js's (any origin that sends CORS headers). Its size and SHA-256 are not
+//                 declared: it must be an IWAD whose lump directory lies inside the file, and it is named after what it is.
 //   ?test=1       test hooks, below
 //
 // Test hooks, only with ?test=1:
@@ -24,6 +27,16 @@
 //   video=native     leave the video mode to the game (its default, fullscreen: a canvas the size of the
 //                    window), as the runner did before the page existed
 //   nofetch=1        do not fetch the IWAD, though the game is told where it would be (a missing IWAD)
+//   raw=1            with iwad=URL: put the file into /work as it is, under its URL's name: no checks, no cache, no IndexedDB
+//                    (the runner's way; tests/tools/run-wasm.js)
+//   idb=off          the data cache's IndexedDB is unavailable (the game's /persist is not touched: see persist=0)
+//   idb=quota        storing the data in IndexedDB fails with a QuotaExceededError
+//   sha=js           hash with the plain JavaScript SHA-256 (what a page without crypto.subtle uses)
+//   stall=MS         stop a download after MS ms without data (default 30000)
+//   window.dlData    what the loader produced (source, from, name, game, size, sha256, cached, notes, hashMs, ...)
+//   window.dlStarts  how many times the page called callMain
+//   window.dlProgress  each progress report of the download: [bytes so far, total or 0 when unknown]
+//   window.dlPersistent  the answer of navigator.storage.persist(), once the data was stored
 //   Module.dlYields  each yield: [the game gave control away, the page resumed it, the game was running again]
 //   window.dlMouse   mouse movements seen on the page (all, while locked, their sum)
 //   window.dlTest    FS, readFile, writeFile, listFiles, syncNow; window.dlOut and dlErr (the game's
@@ -47,15 +60,24 @@
   var startBtn = document.getElementById('start');
   var reloadBtn = document.getElementById('reload');
   var helpEl = document.getElementById('help');
+  var dataInfoEl = document.getElementById('datainfo');
+  var notesEl = document.getElementById('notes');
+  var pickWrap = document.getElementById('pickwrap');
+  var pickInput = document.getElementById('pick');
+  var retryBtn = document.getElementById('retry');
+  var redownloadBtn = document.getElementById('redownload');
+  var useDownloadBtn = document.getElementById('usedownload');
   var testInfoEl = document.getElementById('testinfo');
 
   var FS = null;
   var running = false;
   var ended = false;
   var storageNote = '';
+  var dataName = '';        // the file name the game is given (/work/NAME), once the data is there
   var exitedAt = 0;
 
   window.dlState = 'loading';
+  window.dlStarts = 0;
   window.dlOut = [];
   window.dlErr = [];
   window.dlSyncs = 0;
@@ -77,6 +99,7 @@
     progressEl.hidden = true;
     startBtn.hidden = true;
     helpEl.hidden = true;
+    dataUi(false);
     showStatus(message, isError);
     reloadBtn.hidden = false;
     reloadBtn.focus();
@@ -277,20 +300,139 @@
     }, function (e) { throw new Error(label + ': could not fetch ' + url + ' (' + describe(e) + ')'); });
   }
 
-  // Until brief 03 replaces this loader, only the page's own origin (the IWAD next to it).
-  function iwadUrl() {
-    var u = params.get('iwad') || 'freedoom1.wad';
-    var o = '';
-    try { o = new URL(u, location.href).origin; } catch (e) { throw new Error('?iwad= is not a URL: ' + u); }
-    if (o !== location.origin) { throw new Error('?iwad= must be on the same origin as the page (' + location.origin + '); ' + u + ' is on ' + o + '.'); }
-    return u;
-  }
-  function iwadName() {
+  // ---- The game data ----------------------------------------------------------------------------------
+
+  var CONFIG = (window.DL_CONFIG && window.DL_CONFIG.data) || { url: 'doom1.wad', name: 'doom1.wad', size: 0, sha256: '', revalidate: false };
+  var OVERRIDE = params.get('iwad') || '';
+  var loadSeq = 0;
+  var loadCtl = null;
+  var lastRequest = {};
+
+  function bytesText(n) { return (n / 1048576).toFixed(1) + ' MB'; }
+
+  // Where the game's file name comes from when the data is not fetched (nofetch=1) or placed as it is (raw=1): the URL's name.
+  function urlFileName(u) {
     var n = '';
-    try { n = decodeURIComponent(new URL(iwadUrl(), location.href).pathname.split('/').pop()); } catch (e) { /* below */ }
+    try { n = decodeURIComponent(new URL(u, location.href).pathname.split('/').pop()); } catch (e) { /* below */ }
     n = n.replace(/[^A-Za-z0-9._-]/g, '_');
     return /\.wad$/i.test(n) ? n : 'game.wad';
   }
+
+  function dataOptions() {
+    var hooks = {};
+    if (TEST) { hooks.idb = params.get('idb') || ''; hooks.sha = params.get('sha') || ''; }
+    return {
+      url: OVERRIDE || CONFIG.url,
+      name: OVERRIDE ? '' : (CONFIG.name || ''),
+      size: OVERRIDE ? 0 : (CONFIG.size || 0),
+      sha256: OVERRIDE ? '' : (CONFIG.sha256 || ''),
+      revalidate: !OVERRIDE && !!CONFIG.revalidate,
+      keepUrls: [CONFIG.url],
+      hooks: hooks,
+      stallMs: (TEST && +params.get('stall')) || 30000
+    };
+  }
+
+  // Which buttons belong to which state. The picker is on the start screen and in every error, not once the game runs.
+  function dataUi(on) {
+    var st = window.dlState;
+    var d = window.dlData;
+    var show = on !== false && (st === 'loading' || st === 'nodata' || st === 'ready');
+    pickWrap.hidden = !show;
+    retryBtn.hidden = !(show && st === 'nodata');
+    redownloadBtn.hidden = !(show && st === 'ready' && d && d.source === 'download');
+    useDownloadBtn.hidden = !(show && st === 'ready' && d && d.source === 'local');
+    dataInfoEl.hidden = !(show && dataInfoEl.textContent);
+    notesEl.hidden = !notesEl.textContent;
+  }
+  function setNotes(list) { notesEl.textContent = list.filter(Boolean).join('\n'); notesEl.hidden = !notesEl.textContent; }
+
+  function describeData(r) {
+    var what = r.game + ' (' + r.name + ', ' + bytesText(r.size) + ')';
+    var kept = r.cached ? ' Kept in this browser.' : '';
+    if (r.source === 'local') {
+      var own = 'Game data: your own copy "' + r.fileName + '", ' + what;
+      return r.from === 'cache' ? own + ', kept in this browser since ' + new Date(r.storedAt).toLocaleDateString() + '.'
+                                : own + ', read from your computer.' + kept;
+    }
+    var from = r.url || '';
+    if (r.from === 'cache') { return 'Game data: ' + what + ', from this browser\'s copy of ' + from + ' (stored ' + new Date(r.storedAt).toLocaleDateString() + ').'; }
+    if (r.from === 'revalidated') { return 'Game data: ' + what + ', from this browser\'s copy of ' + from + ' (the server says it has not changed).'; }
+    return 'Game data: ' + what + ', downloaded just now from ' + from + '.' + kept;
+  }
+
+  function showProgress(got, total) {
+    if (TEST) { (window.dlProgress || (window.dlProgress = [])).push([got, total]); }
+    progressEl.hidden = false;
+    if (total) {
+      progressEl.max = 100;
+      progressEl.value = 100 * got / total;
+      showStatus('Downloading ' + (dataName || 'the game data') + ': ' + bytesText(got) + ' of ' + bytesText(total) + ' (' + Math.floor(100 * got / total) + '%)');
+    } else {
+      progressEl.removeAttribute('value');      // total unknown: an unfilled bar, and the bytes so far
+      showStatus('Downloading the game data: ' + bytesText(got) + ' so far');
+    }
+  }
+
+  function accept(r) {
+    // The file goes in as /work/NAME, where the game looks (-iwad). A file picked earlier under another name goes.
+    if (dataName && dataName !== r.name && exists(WORK_DIR + '/' + dataName)) { FS.unlink(WORK_DIR + '/' + dataName); }
+    FS.writeFile(WORK_DIR + '/' + r.name, r.bytes);
+    dataName = r.name;
+    window.dlData = { source: r.source, from: r.from, name: r.name, game: r.game, size: r.size, sha256: r.sha256, cached: r.cached,
+                      notes: r.notes.slice(), hashMs: r.hashMs, hashHow: r.hashHow, downloadMs: r.downloadMs, url: r.url, fileName: r.fileName,
+                      persistent: window.dlPersistent };
+    dataInfoEl.textContent = describeData(r);
+    setNotes([storageNote].concat(r.notes));
+    progressEl.hidden = true;
+    showStatus('');
+    setState('ready');
+    dataUi();
+    startBtn.hidden = false;
+    startBtn.focus();
+    if (testInfoEl && !testInfoEl.hidden) { testInfoEl.textContent = 'test mode: args=' + JSON.stringify(gameArgs()) + ' persist=' + PERSIST + ' fast=' + !!Module.dlFast; }
+  }
+
+  function dataFailed(e) {
+    var msg = e && e.name === 'DataError' ? e.message : 'The game data could not be loaded: ' + describe(e);
+    dataInfoEl.textContent = '';
+    progressEl.hidden = true;
+    startBtn.hidden = true;
+    setNotes([storageNote]);
+    setState('nodata');
+    showStatus(msg + '\nPick your own copy of the game data (an IWAD, such as DOOM.WAD or DOOM2.WAD), or try again.', true);
+    window.dlData = { error: e && e.kind ? e.kind : 'unknown', message: msg };
+    dataUi();
+    retryBtn.focus();
+  }
+
+  // Gets the data: the download (or the cache), or a File the person picked, or the download again. A request that comes
+  // while another runs replaces it: the earlier one is aborted and its result is dropped.
+  function loadData(extra) {
+    var seq = ++loadSeq;
+    if (loadCtl) { loadCtl.abort(); }
+    loadCtl = new AbortController();
+    lastRequest = extra && !extra.file ? extra : {};
+    setState('loading');
+    window.dlData = null;
+    startBtn.hidden = true;
+    showStatus('Loading the game data...');
+    progressEl.hidden = true;
+    dataInfoEl.textContent = '';
+    dataUi();
+    var o = Object.assign(dataOptions(), extra || {}, { signal: loadCtl.signal, onProgress: showProgress, onStatus: function (t) { showStatus(t); } });
+    return DlData.load(o).then(function (r) { if (seq === loadSeq) { accept(r); } })
+      .catch(function (e) { if (seq === loadSeq && !(e && e.kind === 'cancelled')) { dataFailed(e); } });
+  }
+
+  pickInput.addEventListener('change', function () {
+    var f = pickInput.files && pickInput.files[0];
+    pickInput.value = '';
+    if (f && !running) { loadData({ file: f }); }
+  });
+  retryBtn.addEventListener('click', function () { loadData(lastRequest); });
+  redownloadBtn.addEventListener('click', function () { loadData({ force: true }); });
+  useDownloadBtn.addEventListener('click', function () { loadData({ useDownload: true }); });
 
   function prepare() {
     FS = Module.FS;
@@ -311,10 +453,8 @@
     }
     return ready.then(function () {
       FS.chdir(WORK_DIR);   // writable: the join's $$$.sav goes to the working directory
+      // legacy.wad is part of the build, not game data: served next to the page and left to the HTTP cache (data-hosting.md).
       return fetchBytes('legacy.wad', 'legacy.wad').then(function (b) { FS.writeFile(WORK_DIR + '/legacy.wad', b); });
-    }).then(function () {
-      if (TEST && params.get('nofetch') === '1') { return; }
-      return fetchBytes(iwadUrl(), iwadName()).then(function (b) { FS.writeFile(WORK_DIR + '/' + iwadName(), b); });
     }).then(function () {
       var files = TEST ? (params.get('files') || '').split(',').filter(Boolean) : [];
       return files.reduce(function (p, url) {
@@ -324,11 +464,22 @@
       }, Promise.resolve());
     }).then(function () {
       startSyncing();
-      setState('ready');
-      progressEl.hidden = true;
-      showStatus(storageNote);
-      startBtn.hidden = false;
-      startBtn.focus();
+      if (TEST && params.get('nofetch') === '1') {
+        // the game is told where the file would be; it is not there
+        dataName = urlFileName(OVERRIDE || CONFIG.url);
+        setState('ready'); progressEl.hidden = true; showStatus(storageNote); startBtn.hidden = false; startBtn.focus();
+        return;
+      }
+      if (TEST && params.get('raw') === '1' && OVERRIDE) {
+        // The runner's way: the file as it is, under its URL's name, with no check and no cache.
+        dataName = urlFileName(OVERRIDE);
+        return fetchBytes(OVERRIDE, dataName).then(function (b) {
+          FS.writeFile(WORK_DIR + '/' + dataName, b);
+          window.dlData = { source: 'raw', name: dataName, size: b.length };
+          setState('ready'); progressEl.hidden = true; showStatus(storageNote); startBtn.hidden = false; startBtn.focus();
+        });
+      }
+      return loadData();
     });
   }
 
@@ -337,7 +488,7 @@
   function gameArgs() {
     // A 640x480 window: the game's default is "fullscreen", which SDL turns into a canvas the size of the
     // browser window, and that is a different (and large) picture for every window.
-    var a = ['-home', HOME_DIR, '-iwad', WORK_DIR + '/' + iwadName(), '-nomusic', '-noendtext'];
+    var a = ['-home', HOME_DIR, '-iwad', WORK_DIR + '/' + dataName, '-nomusic', '-noendtext'];
     if (!(TEST && params.get('video') === 'native')) { a.push('-window', '-width', '640', '-height', '480'); }
     if (!TEST) { return a; }
     var extra = params.get('args') || '';
@@ -367,7 +518,9 @@
     overlay.hidden = true;
     helpEl.hidden = false;
     running = true;
+    window.dlStarts++;
     setState('running');
+    dataUi(false);
     canvas.focus();
     fit();
     primeAudio();

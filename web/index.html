@@ -13,12 +13,23 @@
     <h1>Doom Legacy</h1>
     <progress id="progress" max="100" value="0" hidden></progress>
     <p id="status">Loading...</p>
+    <p id="datainfo" hidden></p>
+    <p id="notes" hidden></p>
     <button id="start" type="button" hidden>Click to start</button>
+    <div id="datactl">
+      <label id="pickwrap" class="button secondary" hidden>Use your own copy...<input id="pick" type="file" accept=".wad,.WAD"></label>
+      <button id="retry" class="secondary" type="button" hidden>Try again</button>
+      <button id="redownload" class="secondary" type="button" hidden>Download again</button>
+      <button id="usedownload" class="secondary" type="button" hidden>Use the download instead</button>
+    </div>
     <button id="reload" type="button" hidden>Reload the page</button>
   </div>
 </main>
 <p id="help" hidden>Arrows move, Ctrl fires, Space opens doors, Escape is the menu. Click the picture to capture the mouse.</p>
 <p id="testinfo" hidden></p>
+<script src="config.js"></script>
+<script src="iwads.js"></script>
+<script src="data.js"></script>
 <script src="page.js"></script>
 </body>
 </html>
