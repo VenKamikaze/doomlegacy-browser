@@ -326,6 +326,36 @@ void B_Init_Names()
 }
 
 
+// Test only: how many times a bot has aimed (called atan), and a hash of every result
+// (all 64 bits of the double), to show that a run reached it and that two machines
+// computed the same numbers.
+unsigned int  bot_atan_calls = 0;
+uint32_t  bot_atan_hash = 2166136261u;
+
+static void bot_atan_note( double v )
+{
+    uint64_t bits;
+    int i;
+    memcpy( &bits, &v, sizeof(bits) );
+    for( i = 0; i < 8; i++ )
+    {
+        bot_atan_hash ^= (uint32_t)((bits >> (8 * i)) & 0xFF);
+        bot_atan_hash *= 16777619u;
+    }
+    bot_atan_calls++;
+}
+
+// For the test hash (test_dump.c): the two numbers B_BuildTiccmd keeps between bots.
+// With the speed "botskill" (10) they are set again for each bot, before they are used:
+// then they are scratch, and not given.  Returns 1 when they are given.
+int B_Get_speed_state( byte * frac, byte * tics )
+{
+    if( cv_bot_speed.EV == 10 )  return 0;
+    *frac = bot_speed_frac;
+    *tics = bot_run_tics;
+    return 1;
+}
+
 static byte bot_init_done = 0;
 
 static void CV_botrandom_OnChange( void )
@@ -739,7 +769,11 @@ void B_AimWeapon(player_t* p)
         }
 
         perfect_angle = angle = R_PointToAngle2 (source->x, source->y, px, py);
-        p->cmd.aiming = FIXED_TO_INT((int)((atan ((pz - source->z + (dest->height - source->height)/2) / (double)dist)) * ANG180/M_PI));
+        {
+            double  at = atan ((pz - source->z + (dest->height - source->height)/2) / (double)dist);
+            bot_atan_note( at );  // test only: counts the call and hashes the result
+            p->cmd.aiming = FIXED_TO_INT((int)(at * ANG180/M_PI));
+        }
 
         // Random aiming imperfections.
         if( P_AproxDistance(dest->momx, dest->momy) > FIXINT(8) )	//enemy is moving reasonably fast, so not perfectly acurate
@@ -1608,7 +1642,8 @@ start_node_walk:
 } // end of BOT_Thinker
 
 
-// Forget what cannot be saved.  To sync client and server bots.
+// Forget the path and the destination.  Not used by the savegame any more: it holds
+// them, so that saving a game does not change it (a joiner gets what the others have).
 void  B_forget_stuff( bot_t * bot )
 {
     bot->destNode = NULL;

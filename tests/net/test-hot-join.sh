@@ -50,7 +50,7 @@ while [ $# -gt 0 ]; do
         --bin) bin="${2:?}"; shift 2 ;;
         --together) together=1; shift ;;
         --keep) keep="${2:?}"; shift 2 ;;
-        --bots) bots=(+addbot); shift ;;
+        --bots) bots=(+botgen 1 +botrandseed 136 -testaddbots 10 2); shift ;;
         --no-force) force=0; shift ;;
         --state) state=(-teststate ${2:?}); shift 2 ;;  # "N" or "FROM TO"
         --join-after) join_after="${2:?}"; shift 2 ;;

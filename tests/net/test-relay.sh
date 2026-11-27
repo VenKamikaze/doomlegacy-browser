@@ -8,6 +8,10 @@
 #   tests/net/test-relay.sh --impair-only   # AC4 only
 #   tests/net/test-relay.sh --runs N        # N runs of each case
 #   tests/net/test-relay.sh --dedicated     # a -dedicated server and two players, clean
+#   tests/net/test-relay.sh --bots          # the server adds two bots (with long names) at tic 10 (brief F3):
+#                                           # B joins a game with bots, A is a player that was there from the
+#                                           # start, so the three files agreeing shows that saving the game for
+#                                           # B did not change the game the server (and A) go on with
 #   tests/net/test-relay.sh --impair SPEC   # the impairment (default below)
 #   tests/net/test-relay.sh --bin FILE      # another game binary
 #   tests/net/test-relay.sh --keep          # keep the logs and dumps (printed at the end)
@@ -51,6 +55,7 @@ runs=1
 do_clean=1
 do_impair=1
 dedicated=0
+bots=0
 state_args=()
 # Latency only: the user narrowed AC4 to this on 26 Nov 2026. With loss, duplication or
 # reordering the join in progress diverges, over plain UDP too (bugs.md L31, L35); F4
@@ -65,6 +70,7 @@ while [ $# -gt 0 ]; do
         --impair-only) do_clean=0; shift ;;
         --runs) runs="${2:?}"; shift 2 ;;
         --dedicated) dedicated=1; do_impair=0; shift ;;
+        --bots) bots=1; shift ;;
         --impair) impair="${2:?}"; shift 2 ;;
         --bin) game_bin="${2:?}"; shift 2 ;;
         --keep) T_KEEP=1; shift ;;
@@ -94,6 +100,8 @@ run_case() {
 
     local srv_args=(-relay "$relay_addr" -server 2 -warp 1 1)
     [ "$dedicated" = 1 ] && srv_args=(-relay "$relay_addr" -dedicated -server 2)
+    # two bots whose names are long (bugs.md L24: 9 characters each, with this seed) at tic 10
+    [ "$bots" = 1 ] && srv_args+=(+botgen 1 +botrandseed 136 -testaddbots 10 2)
 
     T_ENV=""; [ "$imp" = 1 ] && T_ENV="VNET_IMPAIR=$impair,seed=$((seed + 1))"
     t_game "$label-s" "${srv_args[@]}" -testdump "$t_tmp/$label-s/s.bin" "${state_args[@]}"

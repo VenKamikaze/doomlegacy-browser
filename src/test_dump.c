@@ -20,6 +20,10 @@
 //                         single-player game, and play on with no input as fast
 //                         as possible and with no drawing.  The first record
 //                         after it is the state as loaded.
+//   -testaddbots TIC N    (brief F3) at game tic TIC, on the server, add N bots, as the
+//                         console command "addbot" does.  The command line's +addbot
+//                         runs before the level starts, and the first bot then takes
+//                         the host's own player slot.
 //   -testcensus           print how many thinkers of each kind the level has,
 //                         each time one of the counts reaches a new maximum
 //   -testsizes            print the bytes one record of each sector effect takes
@@ -64,6 +68,8 @@
 #include "hu_stuff.h"
 #include "am_map.h"
 #include "i_system.h"
+#include "b_game.h"
+#include "b_node.h"
 
 int  testdump_active = 0;
 
@@ -240,6 +246,41 @@ static uint32_t hash_random( void )
     return hv;
 }
 
+#ifdef SG_BOT_STATE
+// A bot's whole state: every machine runs every bot, so all of it decides a later
+// ticcmd (brief F3).  Pointers are numbers in the thinker list; the destination and the
+// path are grid coordinates.
+static void hash_bot( const bot_t * b )
+{
+    const SearchNode_t * n;
+    int len = 0;
+
+    F( bflags, b->flags );  F( blastnum, b->lastNumWeapons );
+    F( bskill, b->skill );  F( bwhat, b->what );  F( bturn, b->turn_timer );
+    F( bblocked, b->blockedcount );  F( bavoid, b->avoidtimer );
+    F( bstrafe, b->strafetimer );  F( bweaponchange, b->weaponchangetimer );
+    F( brun, b->runtimer );
+    F( blastx, b->lastMobjX );  F( blasty, b->lastMobjY );
+    F( bbestseen, ord_of( b->bestSeenItem ) );  F( bbest, ord_of( b->bestItem ) );
+    F( benemy, ord_of( b->closestEnemy ) );
+    F( bmissile, ord_of( b->closestMissile ) );
+    F( bunseenenemy, ord_of( b->closestUnseenEnemy ) );
+    F( bunseenmate, ord_of( b->closestUnseenTeammate ) );
+    F( blast, ord_of( b->lastMobj ) );  F( bmate, ord_of( b->teammate ) );
+    if( b->destNode )  { F( bdestx, b->destNode->x );  F( bdesty, b->destNode->y ); }
+    else               { F( bdest, -1 ); }
+    if( b->path )
+    {
+        for( n = b->path->first; n; n = n->vnext )
+        {
+            F( bpathx, n->x );  F( bpathy, n->y );
+            len++;
+        }
+    }
+    F( bpathlen, len );
+}
+#endif
+
 static uint32_t hash_players( void )
 {
     int i, j;
@@ -290,6 +331,9 @@ static uint32_t hash_players( void )
         F( specialsector, pl->specialsector );
         F( skin, pl->skin );
         F( bot, pl->bot != NULL );
+#ifdef SG_BOT_STATE
+        if( pl->bot )  hash_bot( pl->bot );
+#endif
         for( j = 0; j < NUMPSPRITES; j++ )
         {
             F( ps_state, state_num( pl->psprites[j].state ) );
@@ -299,6 +343,23 @@ static uint32_t hash_players( void )
         F( flyheight, pl->flyheight );
         line_end();
     }
+#ifdef SG_BOT_STATE
+    // The bots' globals: the sector the last path query left (b_node.c), the speed
+    // numbers B_BuildTiccmd keeps between bots (b_game.c).  Only with a bot.
+    for( i = 0; i < MAXPLAYERS; i++ )
+        if( playeringame[i] && players[i].bot )  break;
+    if( i < MAXPLAYERS )
+    {
+        byte frac, tics;
+        line_begin( "botglobals %d", 0 );
+        F( oksector, sector_num( oksector ) );
+        if( B_Get_speed_state( &frac, &tics ) )
+        {
+            F( speedfrac, frac );  F( runtics, tics );
+        }
+        line_end();
+    }
+#endif
     return hv;
 }
 
@@ -592,6 +653,8 @@ static tic_t  testquit_tic = 0;
 static const char *  testload_file = NULL;
 static int  options_read = 0;
 static int  census_on = 0;
+static tic_t  addbots_tic = 0;
+static int  addbots_count = 0;
 
 static void read_options( void )
 {
@@ -612,6 +675,12 @@ static void read_options( void )
     i = M_CheckParm( "-testload" );
     if( i && M_IsNextParm() )  testload_file = M_GetNextParm();
     census_on = M_CheckParm( "-testcensus" );
+    i = M_CheckParm( "-testaddbots" );
+    if( i && i + 2 < myargc )
+    {
+        addbots_tic = (tic_t) atoi( myargv[i + 1] );
+        addbots_count = atoi( myargv[i + 2] );
+    }
 }
 
 // What the level holds that a savegame has records for: the number of each
@@ -848,6 +917,12 @@ void TestDump_Tic( void )
         load_savegame( name );
     }
 
+    if( addbots_count && gametic == addbots_tic && server )
+    {
+        // as the console does; the bots exist at the next tic
+        for( i = 0; i < addbots_count; i++ )  Command_AddBot();
+        addbots_count = 0;
+    }
     if( testdump_active )
         record_tic();
     if( census_on )
@@ -858,7 +933,14 @@ void TestDump_Tic( void )
             write_savegame( testsave[i].file, testsave[i].game_header );
     }
     if( testquit_tic && gametic >= testquit_tic )
+    {
+#ifdef SG_BOT_STATE
+        printf( "TEST: bot aim (atan) calls: %u, hash of the results %08x\n", bot_atan_calls,
+                (unsigned) bot_atan_hash );
+        fflush( stdout );
+#endif
         I_Quit();
+    }
 }
 
 void TestDump_Init( void )
