@@ -42,7 +42,8 @@ done
 iwad="$root/testdata/freedoom1.wad"
 [ -f "$iwad" ] || { echo "no $iwad (scripts/fetch-test-data.sh)" >&2; exit 2; }
 [ -x "$nat" ] || { echo "no native binary at $nat (scripts/build-native.sh)" >&2; exit 2; }
-if [ ! -x "$bin" ] && [ "$bin_set" = 0 ]; then
+# (rebuilt when it is missing or older than a source file: a stale binary reads an older layout)
+if [ "$bin_set" = 0 ] && { [ ! -x "$bin" ] || [ -n "$(find "$root/src" -name '*.[ch]' -newer "$bin" -print -quit)" ]; }; then
     echo "building the ASan binary (build/asan) ..."
     ( cd "$root" && REAL_CC="gcc -fsanitize=address,undefined -fsanitize-recover=all -fno-sanitize=alignment -fno-omit-frame-pointer -g" \
         scripts/build-native.sh --build build/asan --clean > "${TMPDIR:-/tmp}/asan-build.log" 2>&1 ) || { echo "ASan build failed" >&2; exit 2; }
