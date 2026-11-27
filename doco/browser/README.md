@@ -20,7 +20,7 @@ The goal is Doom Legacy playable in a browser (Emscripten/WASM), **with its musi
 | 00 | [Baseline, state hash and code facts](00-baseline.md): native and wasm builds without `-ffast-math`, a per-tic state hash (`-testdump`) compared native against wasm, a hot-join test over UDP, ASan with recovery, [`code-facts.md`](code-facts.md) | done |
 | 01 | [vnet transport (native)](01-vnet-transport.md): `i_vnet.c` fills the driver table; `-relay HOST:PORT` with `-server`/`-connect CODE`; three native players and a join in progress through a local relay, with impairment | done, 26 Nov 2026 (AC4 narrowed to latency only by the user; the full impairment is F4) |
 | F2 | [Portable savegame between x86_64 and wasm32](F2-portable-savegame.md) (`bugs.md` L19, L30) | done, 26 Nov 2026 (also fixes L36 to L40, five more things a savegame lost; L43 logged) |
-| F3 | Bots and joining a game in progress (`bugs.md` L23, L24) | next |
+| F3 | [Bots and joining a game in progress](F3-bots-hot-join.md) (`bugs.md` L23, L24; also L20, L45, L46, L51 to L53) | done, 27 Nov 2026 (bot aim without libm, a bot's whole state in the savegame; L54 logged for F4) |
 | F4 | Joining a game in progress over a lossy or reordering link (`bugs.md` L31, L35): `PT_STATE` sequence number, the cause of L35, brief 01's AC4 at its full values | queued, before 04 |
 
 ## Settled decisions
@@ -39,6 +39,7 @@ Don't reopen these inside a brief. If one proves wrong, stop and ask the user.
 - **D10. Toolchain:** Emscripten 6.0.13 with the jfsw-browser pins; ports come from this repo's `emscripten-ports` branch (SDL2, SDL2_mixer, Ogg, Vorbis).
 - **D11. Upstream-friendly changes:** new files where possible, `#ifdef __EMSCRIPTEN__`, no reformatting of upstream code.
 - **D12. Git**, as below.
+- **D13. Bots may change, and so may demo compatibility** (the user, 27 Nov 2026: "Bots aren't part of original doom but are a feature of the port. I'm okay with changing that behaviour if it improves things"; "I'm also okay with breaking demo compatibility, we just would need to state so in doco"). F3 used it: the bots aim with the `tantoangle` table instead of libm's `atan`, and a demo recorded with bots before F3 does not play back as recorded (`bugs.md` L47, `building.md`). Any such break must be stated in the docs.
 
 ## Git
 

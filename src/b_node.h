@@ -33,6 +33,7 @@
 #include "doomtype.h"
 #include "m_fixed.h"
 #include "p_mobj.h"
+#include "r_defs.h"
 
 //#define BOTNODEGRIDSIZE	/*8388608		//128<<16	*/2097152		//32<<16
 // BOT NODE GRID SIZE 32<<16
@@ -79,6 +80,7 @@ typedef struct SearchNode_s
 } SearchNode_t;
 
 extern SearchNode_t***    botNodeArray;
+extern sector_t * oksector;
 extern int  numbotnodes;
 extern int  xOffset, yOffset;
 extern int  xSize, ySize;
@@ -89,6 +91,7 @@ SearchNode_t* B_GetNodeAt(fixed_t x, fixed_t y);
 SearchNode_t* B_GetClosestReachableNode(fixed_t x, fixed_t y);
 boolean B_NodeReachable(mobj_t* mo, fixed_t x, fixed_t y, fixed_t destx, fixed_t desty);
 void B_Init_Nodes(void);
+uint32_t B_Grid_Hash(void);  // for -testdump
 
 #endif
 

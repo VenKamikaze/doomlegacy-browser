@@ -36,6 +36,8 @@
 #include "r_main.h"
 #include "b_bot.h"
 #include "b_node.h"
+#include "b_game.h"
+#include "info.h"
 #include "z_zone.h"
 #include "g_game.h"
 
@@ -55,6 +57,13 @@ int  xSize, ySize;
 SearchNode_t *** botNodeArray = NULL;
 
 static sector_t * last_s = NULL;
+
+// The thing the grid is built with: B_CheckNodePosition reads only its radius.  It used
+// players[0].mo, which exists only when slot 0 is in the game when the level is set up
+// (P_SetupLevel spawns the players first): a machine where it is not (a joiner, when the
+// player in slot 0 has left) built another grid from the server's, with no check of the
+// position and no thing counted as blocking.
+static mobj_t  node_probe;
 
 
 SearchNode_t* B_FindClosestNode(fixed_t x, fixed_t y)
@@ -564,7 +573,7 @@ void B_Build_Nodes(SearchNode_t* node)
                 break;
             }
 
-            if( B_NodeReachable(players[0].mo, posX2x(node->x), posY2y(node->y), posX2x(nx), posY2y(ny)) )
+            if( B_NodeReachable(&node_probe, posX2x(node->x), posY2y(node->y), posX2x(nx), posY2y(ny)) )
             {
                 if (!botNodeArray[nx][ny])
                 {
@@ -588,6 +597,9 @@ void B_Build_Nodes(SearchNode_t* node)
     B_LLDelete(queue);
 }
 
+static uint32_t  grid_hash = 0;   // of the grid of this level, made at the end of B_Init_Nodes
+static uint32_t  grid_hash_make( void );
+
 // Called by: P_SetupLevel
 void B_Init_Nodes( void )
 {
@@ -598,6 +610,14 @@ void B_Init_Nodes( void )
     int  yMin = 1000000000;
 
     SearchNode_t* tempNode;
+
+    // oksector is left by the last query, and it is not game state of this level:
+    // it may point into the sectors of the previous level.  Every machine starts
+    // the level with the same value.
+    oksector = NULL;
+    memset( &node_probe, 0, sizeof(node_probe) );
+    node_probe.radius = mobjinfo[MT_PLAYER].radius;
+    B_Level_Start();
 
     uint32_t iv;
     for (iv=0; iv<numvertexes; iv++)
@@ -664,5 +684,40 @@ void B_Init_Nodes( void )
     }
 
     CONS_Printf("Completed building %d nodes.\n", numbotnodes);
+    grid_hash = grid_hash_make();
+}
+
+// For the test hash: a hash of the whole node grid (size, which nodes there are, their
+// links and costs), to show that every machine built the same one.
+uint32_t B_Grid_Hash( void )
+{
+    return grid_hash;
+}
+
+static uint32_t  grid_hash_make( void )
+{
+    uint32_t h = 2166136261u;
+    int i, j, d;
+    uint32_t v;
+
+#define GRID_MIX(x)  { int bb; v = (uint32_t)(x); for( bb = 0; bb < 4; bb++ ) { h ^= (v >> (8*bb)) & 0xFF; h *= 16777619u; } }
+    GRID_MIX( xSize );  GRID_MIX( ySize );  GRID_MIX( xOffset );  GRID_MIX( yOffset );
+    GRID_MIX( numbotnodes );
+    if( ! botNodeArray )  return h;
+    for( i = 0; i < xSize; i++ )
+    {
+        for( j = 0; j < ySize; j++ )
+        {
+            const SearchNode_t * n = botNodeArray[i][j];
+            if( ! n )  continue;
+            GRID_MIX( i );  GRID_MIX( j );
+            for( d = 0; d < NUMBOTDIRS; d++ )
+            {
+                GRID_MIX( n->dir[d] ? 1 + n->costDir[d] : 0 );
+                if( n->dir[d] )  { GRID_MIX( n->dir[d]->x );  GRID_MIX( n->dir[d]->y ); }
+            }
+        }
+    }
+    return h;
 }
 

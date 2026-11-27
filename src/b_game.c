@@ -35,6 +35,7 @@
 #include "b_bot.h"
 #include "b_game.h"
 #include "b_look.h"
+#include "test_dump.h"
 #include "b_node.h"
 
 // Doom include
@@ -326,6 +327,33 @@ void B_Init_Names()
 }
 
 
+// Test only: how many times a bot has aimed, and a hash of every aim value, to show that a
+// run reached the aiming code and that two machines computed the same numbers.
+unsigned int  bot_aim_calls = 0;
+uint32_t  bot_aim_hash = 2166136261u;
+
+static void bot_aim_note( int aiming )
+{
+    int i;
+    for( i = 0; i < 4; i++ )
+    {
+        bot_aim_hash ^= ((uint32_t)aiming >> (8 * i)) & 0xFF;
+        bot_aim_hash *= 16777619u;
+    }
+    bot_aim_calls++;
+}
+
+// For the test hash (test_dump.c): the two numbers B_BuildTiccmd keeps between bots.
+// With the speed "botskill" (10) they are set again for each bot, before they are used:
+// then they are scratch, and not given.  Returns 1 when they are given.
+int B_Get_speed_state( byte * frac, byte * tics )
+{
+    if( cv_bot_speed.EV == 10 )  return 0;
+    *frac = bot_speed_frac;
+    *tics = bot_run_tics;
+    return 1;
+}
+
 static byte bot_init_done = 0;
 
 static void CV_botrandom_OnChange( void )
@@ -403,7 +431,7 @@ void B_Send_all_bots_NameColor( void )
 
 void Command_AddBot(void)
 {
-    byte buf[10];
+    byte buf[2 + MAXPLAYERNAME + 1];  // pn, color, name string and its 0
     byte pn = 0;
 
     if( !server )
@@ -624,6 +652,41 @@ void B_Turn_Away_Point(player_t* p, fixed_t x, fixed_t y)
     }
 }
 
+#ifdef BOT_AIM_COMPARE
+int  bot_aim_maxdiff = 0;
+#endif
+
+// The elevation angle of a slope dz/dist (dist >= 0, both fixed_t): atan( dz / dist ) as a
+// signed 32 bit angle (-ANG90..ANG90), from the engine's own tantoangle table, with integer
+// arithmetic only.  This replaces a call to libm's atan, which is not the same function on
+// every machine (glibc, Emscripten's musl): every machine runs every bot, and a bot that
+// aims one unit differently is a desync.  The table steps are ANG45/2048, so the result is
+// within 3 units of the 16 bit aiming angle (cmd.aiming) of what atan gave (the slope is
+// rounded to the nearest table entry; cut off, it was 6).
+static
+signed_angle_t B_Slope_Angle( fixed_t dz, fixed_t dist )
+{
+    int64_t  num = (dz < 0)? -(int64_t)dz : (int64_t)dz;
+    int64_t  den = dist;
+    uint32_t  slope;
+    angle_t  ang;
+
+    if( num == 0 )  return 0;
+    if( num <= den )
+    {
+        slope = (uint32_t)(((num << SLOPEBITS) + den / 2) / den);  // den > 0 here
+        if( slope > SLOPERANGE )  slope = SLOPERANGE;
+        ang = tantoangle[ slope ];
+    }
+    else
+    {
+        slope = (uint32_t)(((den << SLOPEBITS) + num / 2) / num);
+        if( slope > SLOPERANGE )  slope = SLOPERANGE;
+        ang = ANG90 - tantoangle[ slope ];
+    }
+    return (dz < 0)? -(signed_angle_t)ang : (signed_angle_t)ang;
+}
+
 static
 void B_AimWeapon(player_t* p)
 {
@@ -739,7 +802,19 @@ void B_AimWeapon(player_t* p)
         }
 
         perfect_angle = angle = R_PointToAngle2 (source->x, source->y, px, py);
-        p->cmd.aiming = FIXED_TO_INT((int)((atan ((pz - source->z + (dest->height - source->height)/2) / (double)dist)) * ANG180/M_PI));
+        {
+            fixed_t  dz = pz - source->z + (dest->height - source->height)/2;
+            p->cmd.aiming = FIXED_TO_INT((int) B_Slope_Angle( dz, dist ));
+#ifdef BOT_AIM_COMPARE
+            // Measurement only: the aim libm gave, and the largest difference from this one.
+            {
+                int old = FIXED_TO_INT((int)((atan ( dz / (double)dist )) * ANG180/M_PI));
+                int d = abs( old - p->cmd.aiming );
+                if( d > bot_aim_maxdiff )  bot_aim_maxdiff = d;
+            }
+#endif
+            bot_aim_note( p->cmd.aiming );
+        }
 
         // Random aiming imperfections.
         if( P_AproxDistance(dest->momx, dest->momy) > FIXINT(8) )	//enemy is moving reasonably fast, so not perfectly acurate
@@ -1608,11 +1683,34 @@ start_node_walk:
 } // end of BOT_Thinker
 
 
-// Forget what cannot be saved.  To sync client and server bots.
+// Forget the path and the destination.  Not used by the savegame any more: it holds
+// them, so that saving a game does not change it (a joiner gets what the others have).
 void  B_forget_stuff( bot_t * bot )
 {
     bot->destNode = NULL;
     B_LLClear( bot->path );
+}
+
+// At every level start, on every machine: what a bot holds from the level before is
+// gone, a destination and path in the old grid and pointers to mobjs the level change
+// freed.  B_SpawnBot does it for a bot that is spawned, but not for a bot that is the
+// console player (bugs.md L48), and it leaves closestMissile.  A savegame writes
+// these, so none may point into freed memory.
+void  B_Level_Start( void )
+{
+    int i;
+    bot_t * bot;
+
+    for( i = 0; i < MAXPLAYERS; i++ )
+    {
+        bot = players[i].bot;
+        if( ! bot )  continue;
+        B_forget_stuff( bot );
+        bot->bestSeenItem = bot->bestItem = NULL;
+        bot->closestEnemy = bot->closestMissile = bot->closestUnseenEnemy = NULL;
+        bot->closestUnseenTeammate = bot->lastMobj = bot->teammate = NULL;
+    }
+    TestDump_BotsAtLevelStart();  // test only: nothing may be left
 }
 
 void  B_Destroy_Bot( player_t * player )

@@ -112,6 +112,10 @@
   // FIL_Filename_of
 #include "b_game.h"
   // B_Destroy_Bot
+#include "b_node.h"
+  // botNodeArray, oksector
+#include "b_search.h"
+  // the bot's path
 
 #include "p_saveg.h"
 
@@ -162,6 +166,7 @@ byte * save_p;
 boolean  save_game_abort = 0;
 int  sg_version = 0;
 boolean  sg_portable = 0;  // sector effects in the portable layout
+static boolean  sg_net_load = 0;  // the savegame being read came by the network (a join)
 
 // =======================================================================
 //          Save Buffer Support
@@ -443,6 +448,7 @@ typedef enum {
   SYNC_slowdoor,
   // optional sections added by this port; far from the values upstream hands out next
   SYNC_soundtarget = 240,
+  SYNC_botstate,   // the rest of the bots' state, after the bots section
   // sync
   SYNC_end = 252,
   SYNC_sync = 253
@@ -4177,11 +4183,91 @@ void P_Archive_Bots()
             WRITE_MobjPointerID(save_p, botp->teammate );
             WRITE_MobjPointerID(save_p, botp->closestUnseenTeammate );
         }
-        // Forget what cannot be saved.
-        B_forget_stuff( botp );
-
+        // What these records leave out is in the section of SYNC_botstate.
         SG_Writebuf();
     }
+}
+
+// The rest of what the bots' decisions read.  Every machine runs every bot, so
+// all of it is game state, and saving it must not change the saving game: nothing
+// is forgotten here.  A section of its own, after the bots, so that a build
+// that does not know it stops at the sync byte instead of misreading the bots.
+// The path and the destination are grid coordinates, not pointers.
+//   oksector (32, a sector index or 0xFFFFFFFF)
+//   the walking bob of every player in the game: count (8), then per player the number (8),
+//            bob_momx and bob_momy (32 each).  Not a bot's state, but it decides when a
+//            player's mobj leaves its running frames (P_PlayerMobjThinker, "stop player
+//            walking sprite", p_mobj.c:480): a joiner that starts it at 0 stops a bot's
+//            running frame at once, and the server's mobj, whose bob is still running down,
+//            keeps it (bugs.md L25, L53).  Only here, so a game without bots is the same bytes.
+//   per bot: player (8), blockedcount, avoidtimer, strafetimer,
+//            weaponchangetimer, runtimer, lastMobjX, lastMobjY (32 each),
+//            destNode x and y (32 each, both 0xFFFFFFFF for none),
+//            path length (32), the x and y (32 each) of each node, first node first
+//   0xFF
+#define BOTSTATE_END  0xFF
+#define BOTSTATE_NONE  0xFFFFFFFF
+
+static
+void P_Archive_Botstate()
+{
+    int i;
+    int32_t n;
+    bot_t * botp;
+    SearchNode_t * node;
+
+    WRITE32(save_p, oksector? (oksector - sectors) : BOTSTATE_NONE);
+    n = 0;
+    for (i = 0; i < MAXPLAYERS; i++)
+        if (playeringame[i])  n++;
+    WRITEBYTE(save_p, n);
+    for (i = 0; i < MAXPLAYERS; i++)
+    {
+        if (!playeringame[i])  continue;
+        WRITEBYTE(save_p, i);
+        WRITE32(save_p, players[i].bob_momx);
+        WRITE32(save_p, players[i].bob_momy);
+    }
+    SG_Writebuf();
+    for (i = 0; i < MAXPLAYERS; i++)
+    {
+        if (!playeringame[i])  continue;
+        botp = players[i].bot;
+        if( ! botp )  continue;
+
+        WRITEBYTE(save_p, i);
+        WRITE32(save_p, botp->blockedcount);
+        WRITE32(save_p, botp->avoidtimer);
+        WRITE32(save_p, botp->strafetimer);
+        WRITE32(save_p, botp->weaponchangetimer);
+        WRITE32(save_p, botp->runtimer);
+        WRITE32(save_p, botp->lastMobjX);
+        WRITE32(save_p, botp->lastMobjY);
+        if( botp->destNode )
+        {
+            WRITE32(save_p, botp->destNode->x);
+            WRITE32(save_p, botp->destNode->y);
+        }
+        else
+        {
+            WRITE32(save_p, BOTSTATE_NONE);
+            WRITE32(save_p, BOTSTATE_NONE);
+        }
+        n = 0;
+        for (node = botp->path->first; node; node = node->vnext)  n++;
+        WRITE32(save_p, n);
+        n = 0;
+        for (node = botp->path->first; node; node = node->vnext)
+        {
+            WRITE32(save_p, node->x);
+            WRITE32(save_p, node->y);
+            // a long path is written in pieces, so that it cannot overrun the buffer
+            if( (++n & 0x3FF) == 0 )  SG_Writebuf();
+        }
+        SG_Writebuf();
+    }
+    WRITEBYTE(save_p, BOTSTATE_END);
+    SG_Writebuf();
 }
 
 // Ver 1.48, 1.49
@@ -4205,10 +4291,11 @@ void P_UnArchive_Bots()
         SG_Readbuf();
 
         playernum = READBYTE(save_p);
-        if( playernum > MAXPLAYERS )
+        if( playernum >= MAXPLAYERS )
         {
             I_SoftError( "SaveGame Bots: Bad Player number\n" );
-            playernum = MAXPLAYERS - 1;
+            save_game_abort = 1;
+            return;
         }
         player = & players[playernum];
 
@@ -4254,8 +4341,135 @@ void P_UnArchive_Bots()
             botp->teammate = READ_MobjPointerID(save_p);
             botp->closestUnseenTeammate = READ_MobjPointerID(save_p);
         }
-        // Will create path and dest_node as needed.
+        // The path and the destination are in the section of SYNC_botstate,
+        // which a savegame of an older build does not have: they stay empty.
     }
+}
+
+// The grid point x, y of the bot's node grid, or NULL when there is none.
+static
+SearchNode_t * SG_bot_grid_node( int32_t x, int32_t y )
+{
+    if( (x < 0) || (x >= xSize) || (y < 0) || (y >= ySize) || !botNodeArray )
+        return NULL;
+    return botNodeArray[x][y];
+}
+
+// True when n more bytes of the savegame are in the buffer: for a save read from a file,
+// what the file had (a truncated file has less), for a buffer, its size.
+static
+boolean SG_have( size_t n )
+{
+    size_t used = save_p - savebuffer;
+    size_t avail = savefile? (size_t) extfile.bufcnt : savebuffer_size;
+    return (used <= avail) && (n <= (avail - used));
+}
+
+#define BOTSTATE_CHUNK  1024  // path nodes read before the buffer is refilled
+
+static
+void P_UnArchive_Botstate()
+{
+    int32_t n, k, m, x, y;
+    uint32_t ui;
+    byte  pn;
+    bot_t * botp;
+    SearchNode_t * node;
+    int32_t * xy;
+
+    SG_Readbuf();
+    if( ! SG_have( 4 + 1 ) )  goto bad_data;
+    ui = READU32(save_p);
+    if( ui == BOTSTATE_NONE )
+        oksector = NULL;
+    else if( ui < numsectors )
+        oksector = &sectors[ui];
+    else
+        goto bad_data;
+
+    // the walking bob of the players
+    n = READBYTE(save_p);
+    if( ! SG_have( (size_t)n * 9 + 1 ) )  goto bad_data;
+    for( k = 0; k < n; k++ )
+    {
+        pn = READBYTE(save_p);
+        x = READ32(save_p);
+        y = READ32(save_p);
+        if( (pn >= MAXPLAYERS) || !playeringame[pn] )  goto bad_data;
+        players[pn].bob_momx = x;
+        players[pn].bob_momy = y;
+    }
+
+    while( (pn = READBYTE(save_p)) != BOTSTATE_END )
+    {
+        SG_Readbuf();
+        // the fixed part of a record: 9 numbers and the length
+        if( save_game_abort || !SG_have( 10 * 4 ) )  goto bad_data;
+        if( (pn >= MAXPLAYERS) || !playeringame[pn] || !players[pn].bot )
+            goto bad_data;
+        botp = players[pn].bot;
+
+        botp->blockedcount = READ32(save_p);
+        botp->avoidtimer = READ32(save_p);
+        botp->strafetimer = READ32(save_p);
+        botp->weaponchangetimer = READ32(save_p);
+        botp->runtimer = READ32(save_p);
+        botp->lastMobjX = READ32(save_p);
+        botp->lastMobjY = READ32(save_p);
+        x = READ32(save_p);
+        y = READ32(save_p);
+        if( (x == (int32_t)BOTSTATE_NONE) && (y == (int32_t)BOTSTATE_NONE) )
+        {
+            botp->destNode = NULL;
+        }
+        else
+        {
+            botp->destNode = SG_bot_grid_node( x, y );
+            if( ! botp->destNode )  goto bad_data;
+        }
+        n = READ32(save_p);
+        // A path has each node of the grid once at most.
+        if( (n < 0) || (n > numbotnodes) )  goto bad_data;
+        B_LLClear( botp->path );
+        // first node first in the file: put the last one in first
+        // (the list is made as it is by B_FindNextNode)
+        xy = Z_Malloc( (n + 1) * 2 * sizeof(int32_t), PU_STATIC, 0 );
+        for( k = 0; k < n; k += m )
+        {
+            // In pieces: the buffer is refilled between them, and each piece is checked
+            // against what the file still has, so that a length the file does not back
+            // reads nothing.  Each node must be a point of the grid.
+            m = n - k;
+            if( m > BOTSTATE_CHUNK )  m = BOTSTATE_CHUNK;
+            SG_Readbuf();
+            if( save_game_abort || !SG_have( (size_t)m * 8 ) )  { Z_Free( xy );  goto bad_data; }
+            for( x = 0; x < m; x++ )
+            {
+                xy[2*(k+x)] = READ32(save_p);
+                xy[2*(k+x)+1] = READ32(save_p);
+                if( (xy[2*(k+x)] < 0) || (xy[2*(k+x)] >= xSize)
+                    || (xy[2*(k+x)+1] < 0) || (xy[2*(k+x)+1] >= ySize) )
+                {   Z_Free( xy );  goto bad_data;  }
+            }
+        }
+        for( k = n - 1; k >= 0; k-- )
+        {
+            node = Z_Malloc( sizeof(SearchNode_t), PU_STATIC, 0 );
+            memset( node, 0, sizeof(SearchNode_t) );
+            node->x = xy[2*k];
+            node->y = xy[2*k+1];
+            B_LLInsertFirstNode( botp->path, node );
+        }
+        Z_Free( xy );
+        SG_Readbuf();
+        if( save_game_abort )  return;
+        if( ! SG_have( 1 ) )  goto bad_data;
+    }
+    return;
+
+bad_data:
+    I_SoftError( "LoadGame: bad bot state.\n" );
+    save_game_abort = 1;
 }
 
 // =======================================================================
@@ -4525,6 +4739,7 @@ boolean P_Savegame_Read_header( savegame_info_t * infop, byte read_netgame )
 
     // Read header
     save_game_abort = 0;	// all sync reads will check this
+    sg_net_load = read_netgame;
     SG_Readbuf();
     save_p = savebuffer;
 
@@ -4653,6 +4868,8 @@ void P_Savegame_Save_game( void )
     {
         SG_SaveSync( SYNC_bots );
         P_Archive_Bots();  // Player Bots
+        SG_SaveSync( SYNC_botstate );
+        P_Archive_Botstate();
     }
    
     SG_SaveSync( SYNC_end );
@@ -4725,6 +4942,21 @@ boolean P_Savegame_Load_game(void)
     if( SG_ReadSync( SYNC_bots, 1 ) )
     {
         P_UnArchive_Bots();
+        // Optional, a savegame of an older build does not have it
+        if( SG_ReadSync( SYNC_botstate, 1 ) )
+        {
+            P_UnArchive_Botstate();
+        }
+        else if( sg_net_load )
+        {
+            // A server whose bots have no state in the savegame is a build from before F3.
+            // Its bots (the phase of regulate(), the aim, oksector) do not play as ours,
+            // so a game with bots cannot be shared with it: refuse the join.
+            // (A savegame file of such a build loads, with the bots' new fields empty.)
+            I_SoftError( "LoadGame: the server's savegame has bots without their state: it is from a build before the bot changes (F3), whose bots play differently. Join refused.\n" );
+            save_game_abort = 1;
+            goto failed;
+        }
     }
 
     if( ! SG_ReadSync( SYNC_end, 1 ) )  goto sync_err;

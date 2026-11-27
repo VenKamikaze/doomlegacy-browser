@@ -91,6 +91,9 @@ boolean P_Savegame_Load_game (void);
 #define SG_EFFECT_SIZES
 void P_Savegame_Effect_Sizes( void (*report)( const char * name, int bytes, int roundtrip_ok ) );
 
+// The savegame holds a bot's whole state (the section SYNC_botstate); test_dump.c hashes it.
+#define SG_BOT_STATE
+
 // True when the savegame being read has the portable layout of the sector
 // effects (see p_saveg.c).
 extern boolean sg_portable;
