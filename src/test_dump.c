@@ -381,7 +381,10 @@ static void hash_mobj( int ord, const mobj_t * mo )
 #ifdef MOBJ_HAS_FLAGS3
     F( flags3, mo->flags3 );
 #endif
-    F( tflags, mo->tflags );  F( eflags, mo->eflags );
+    // The colour translation (MFT_TRANSLATION6) is how the renderer paints a player: it
+    // follows the player's colour setting, which a loaded or joined game sends again
+    // (a bot's colour from the server's own table), and nothing in the game reads it.
+    F( tflags, mo->tflags & ~MFT_TRANSLATION6 );  F( eflags, mo->eflags );
     F( special1, mo->special1 );  F( special2, mo->special2 );
     F( health, mo->health );
     F( tics, mo->tics );
