@@ -22,6 +22,7 @@ The goal is Doom Legacy playable in a browser (Emscripten/WASM), **with its musi
 | F2 | [Portable savegame between x86_64 and wasm32](F2-portable-savegame.md) (`bugs.md` L19, L30) | done, 26 Nov 2026 (also fixes L36 to L40, five more things a savegame lost; L43 logged) |
 | F3 | [Bots and joining a game in progress](F3-bots-hot-join.md) (`bugs.md` L23, L24; also L20, L45, L46, L51 to L53) | done, 27 Nov 2026 (bot aim without libm, a bot's whole state in the savegame; L54 logged for F4) |
 | 02 | [The Emscripten port](02-emscripten-port.md): ASYNCIFY yields in the blocking loops, a page with click to start, keyboard, mouse, sound effects, IDBFS for config and saves | done, 27 Nov 2026 (play-test pending: steps in its Outcome) |
+| 03 | [Data download](03-data-download.md): the page downloads the IWAD (default: shareware `DOOM1.WAD` from its own origin, D14), checks it, caches it in IndexedDB, a file picker for one's own copy, clear errors, hosting notes | in progress |
 | F4 | Joining a game in progress over a lossy or reordering link (`bugs.md` L31, L35): `PT_STATE` sequence number, the cause of L35, brief 01's AC4 at its full values | queued, before 04 |
 
 ## Settled decisions
@@ -41,6 +42,7 @@ Don't reopen these inside a brief. If one proves wrong, stop and ask the user.
 - **D11. Upstream-friendly changes:** new files where possible, `#ifdef __EMSCRIPTEN__`, no reformatting of upstream code.
 - **D12. Git**, as below.
 - **D13. Bots may change, and so may demo compatibility** (the user, 27 Nov 2026: "Bots aren't part of original doom but are a feature of the port. I'm okay with changing that behaviour if it improves things"; "I'm also okay with breaking demo compatibility, we just would need to state so in doco"). F3 used it: the bots aim with the `tantoangle` table instead of libm's `atan`, and a demo recorded with bots before F3 does not play back as recorded (`bugs.md` L47, `building.md`). Any such break must be stated in the docs.
+- **D14. The page downloads the shareware `DOOM1.WAD` by default** (the user, 27 Nov 2026: "Fetch the shareware wad by default"), served unmodified from the page's own origin. Freedoom stays available by configuration; a person's own copy (registered included) can be picked from disk; nothing registered is offered for download.
 
 ## Git
 
