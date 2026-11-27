@@ -112,6 +112,10 @@
   // FIL_Filename_of
 #include "b_game.h"
   // B_Destroy_Bot
+#include "b_node.h"
+  // botNodeArray, oksector
+#include "b_search.h"
+  // the bot's path
 
 #include "p_saveg.h"
 
@@ -443,6 +447,7 @@ typedef enum {
   SYNC_slowdoor,
   // optional sections added by this port; far from the values upstream hands out next
   SYNC_soundtarget = 240,
+  SYNC_botstate,   // the rest of the bots' state, after the bots section
   // sync
   SYNC_end = 252,
   SYNC_sync = 253
@@ -4177,11 +4182,73 @@ void P_Archive_Bots()
             WRITE_MobjPointerID(save_p, botp->teammate );
             WRITE_MobjPointerID(save_p, botp->closestUnseenTeammate );
         }
-        // Forget what cannot be saved.
-        B_forget_stuff( botp );
-
+        // What these records leave out is in the section of SYNC_botstate.
         SG_Writebuf();
     }
+}
+
+// The rest of what the bots' decisions read.  Every machine runs every bot, so
+// all of it is game state, and saving it must not change the saving game: nothing
+// is forgotten here.  A section of its own, after the bots, so that a build
+// that does not know it stops at the sync byte instead of misreading the bots.
+// The path and the destination are grid coordinates, not pointers.
+//   oksector (32, a sector index or 0xFFFFFFFF)
+//   per bot: player (8), blockedcount, avoidtimer, strafetimer,
+//            weaponchangetimer, runtimer, lastMobjX, lastMobjY (32 each),
+//            destNode x and y (32 each, both 0xFFFFFFFF for none),
+//            path length (32), the x and y (32 each) of each node, first node first
+//   0xFF
+#define BOTSTATE_END  0xFF
+#define BOTSTATE_NONE  0xFFFFFFFF
+
+static
+void P_Archive_Botstate()
+{
+    int i;
+    int32_t n;
+    bot_t * botp;
+    SearchNode_t * node;
+
+    WRITE32(save_p, oksector? (oksector - sectors) : BOTSTATE_NONE);
+    for (i = 0; i < MAXPLAYERS; i++)
+    {
+        if (!playeringame[i])  continue;
+        botp = players[i].bot;
+        if( ! botp )  continue;
+
+        WRITEBYTE(save_p, i);
+        WRITE32(save_p, botp->blockedcount);
+        WRITE32(save_p, botp->avoidtimer);
+        WRITE32(save_p, botp->strafetimer);
+        WRITE32(save_p, botp->weaponchangetimer);
+        WRITE32(save_p, botp->runtimer);
+        WRITE32(save_p, botp->lastMobjX);
+        WRITE32(save_p, botp->lastMobjY);
+        if( botp->destNode )
+        {
+            WRITE32(save_p, botp->destNode->x);
+            WRITE32(save_p, botp->destNode->y);
+        }
+        else
+        {
+            WRITE32(save_p, BOTSTATE_NONE);
+            WRITE32(save_p, BOTSTATE_NONE);
+        }
+        n = 0;
+        for (node = botp->path->first; node; node = node->vnext)  n++;
+        WRITE32(save_p, n);
+        n = 0;
+        for (node = botp->path->first; node; node = node->vnext)
+        {
+            WRITE32(save_p, node->x);
+            WRITE32(save_p, node->y);
+            // a long path is written in pieces, so that it cannot overrun the buffer
+            if( (++n & 0x3FF) == 0 )  SG_Writebuf();
+        }
+        SG_Writebuf();
+    }
+    WRITEBYTE(save_p, BOTSTATE_END);
+    SG_Writebuf();
 }
 
 // Ver 1.48, 1.49
@@ -4255,8 +4322,94 @@ void P_UnArchive_Bots()
             botp->teammate = READ_MobjPointerID(save_p);
             botp->closestUnseenTeammate = READ_MobjPointerID(save_p);
         }
-        // Will create path and dest_node as needed.
+        // The path and the destination are in the section of SYNC_botstate,
+        // which a savegame of an older build does not have: they stay empty.
     }
+}
+
+// The grid point x, y of the bot's node grid, or NULL when there is none.
+static
+SearchNode_t * SG_bot_grid_node( int32_t x, int32_t y )
+{
+    if( (x < 0) || (x >= xSize) || (y < 0) || (y >= ySize) || !botNodeArray )
+        return NULL;
+    return botNodeArray[x][y];
+}
+
+static
+void P_UnArchive_Botstate()
+{
+    int32_t n, k, x, y;
+    uint32_t ui;
+    byte  pn;
+    bot_t * botp;
+    SearchNode_t * node;
+
+    SG_Readbuf();
+    ui = READU32(save_p);
+    if( ui == BOTSTATE_NONE )
+        oksector = NULL;
+    else if( ui < numsectors )
+        oksector = &sectors[ui];
+    else
+        goto bad_data;
+
+    while( (pn = READBYTE(save_p)) != BOTSTATE_END )
+    {
+        SG_Readbuf();
+        if( (pn >= MAXPLAYERS) || !playeringame[pn] || !players[pn].bot )
+            goto bad_data;
+        botp = players[pn].bot;
+
+        botp->blockedcount = READ32(save_p);
+        botp->avoidtimer = READ32(save_p);
+        botp->strafetimer = READ32(save_p);
+        botp->weaponchangetimer = READ32(save_p);
+        botp->runtimer = READ32(save_p);
+        botp->lastMobjX = READ32(save_p);
+        botp->lastMobjY = READ32(save_p);
+        x = READ32(save_p);
+        y = READ32(save_p);
+        if( (x == (int32_t)BOTSTATE_NONE) && (y == (int32_t)BOTSTATE_NONE) )
+        {
+            botp->destNode = NULL;
+        }
+        else
+        {
+            botp->destNode = SG_bot_grid_node( x, y );
+            if( ! botp->destNode )  goto bad_data;
+        }
+        n = READ32(save_p);
+        if( (n < 0) || (n > xSize * ySize) )  goto bad_data;
+        B_LLClear( botp->path );
+        // first node first in the file: put the last one in first
+        // (the list is made as it is by B_FindNextNode)
+        {
+            int32_t * xy = Z_Malloc( (n + 1) * 2 * sizeof(int32_t), PU_STATIC, 0 );
+            for( k = 0; k < n; k++ )
+            {
+                xy[2*k] = READ32(save_p);
+                xy[2*k+1] = READ32(save_p);
+                if( (k & 0x3FF) == 0x3FF )  SG_Readbuf();
+            }
+            for( k = n - 1; k >= 0; k-- )
+            {
+                node = Z_Malloc( sizeof(SearchNode_t), PU_STATIC, 0 );
+                memset( node, 0, sizeof(SearchNode_t) );
+                node->x = xy[2*k];
+                node->y = xy[2*k+1];
+                B_LLInsertFirstNode( botp->path, node );
+            }
+            Z_Free( xy );
+        }
+        SG_Readbuf();
+        if( save_game_abort )  return;
+    }
+    return;
+
+bad_data:
+    I_SoftError( "LoadGame: bad bot state.\n" );
+    save_game_abort = 1;
 }
 
 // =======================================================================
@@ -4654,6 +4807,8 @@ void P_Savegame_Save_game( void )
     {
         SG_SaveSync( SYNC_bots );
         P_Archive_Bots();  // Player Bots
+        SG_SaveSync( SYNC_botstate );
+        P_Archive_Botstate();
     }
    
     SG_SaveSync( SYNC_end );
@@ -4726,6 +4881,9 @@ boolean P_Savegame_Load_game(void)
     if( SG_ReadSync( SYNC_bots, 1 ) )
     {
         P_UnArchive_Bots();
+        // Optional, a savegame of an older build does not have it
+        if( SG_ReadSync( SYNC_botstate, 1 ) )
+            P_UnArchive_Botstate();
     }
 
     if( ! SG_ReadSync( SYNC_end, 1 ) )  goto sync_err;

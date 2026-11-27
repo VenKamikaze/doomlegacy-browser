@@ -599,6 +599,11 @@ void B_Init_Nodes( void )
 
     SearchNode_t* tempNode;
 
+    // oksector is left by the last query, and it is not game state of this level:
+    // it may point into the sectors of the previous level.  Every machine starts
+    // the level with the same value.
+    oksector = NULL;
+
     uint32_t iv;
     for (iv=0; iv<numvertexes; iv++)
     {
