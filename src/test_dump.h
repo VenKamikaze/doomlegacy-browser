@@ -22,6 +22,13 @@ void TestDump_Tic( void );
 // it should still wait. Always false without the option.
 int TestDump_UnpauseDelay( unsigned int now );
 
+// Test-only: called at the end of B_Level_Start. With -testdump, prints how many of the
+// bots' mobj pointers, destinations and path nodes are still set, when there are bots:
+// "TEST: bots at level start: N bots, P pointers, D destinations, S path nodes". Memory
+// that the old level freed is reused by the new one, so the state hash can take a stale
+// pointer for a live mobj; this count cannot.
+void TestDump_BotsAtLevelStart( void );
+
 // True if -testdump is active.
 extern int  testdump_active;
 

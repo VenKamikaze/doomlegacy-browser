@@ -35,6 +35,7 @@
 #include "b_bot.h"
 #include "b_game.h"
 #include "b_look.h"
+#include "test_dump.h"
 #include "b_node.h"
 
 // Doom include
@@ -1709,6 +1710,7 @@ void  B_Level_Start( void )
         bot->closestEnemy = bot->closestMissile = bot->closestUnseenEnemy = NULL;
         bot->closestUnseenTeammate = bot->lastMobj = bot->teammate = NULL;
     }
+    TestDump_BotsAtLevelStart();  // test only: nothing may be left
 }
 
 void  B_Destroy_Bot( player_t * player )

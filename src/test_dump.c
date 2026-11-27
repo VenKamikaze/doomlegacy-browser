@@ -1053,6 +1053,29 @@ void TestDump_Init( void )
     }
 }
 
+void TestDump_BotsAtLevelStart( void )
+{
+    int i, nb = 0, np = 0, nd = 0, ns = 0;
+    const SearchNode_t * n;
+
+    if( ! testdump_active )  return;
+    for( i = 0; i < MAXPLAYERS; i++ )
+    {
+        const bot_t * b = players[i].bot;
+        if( ! b )  continue;
+        nb++;
+        np += (b->bestSeenItem != NULL) + (b->bestItem != NULL) + (b->closestEnemy != NULL)
+            + (b->closestMissile != NULL) + (b->closestUnseenEnemy != NULL)
+            + (b->closestUnseenTeammate != NULL) + (b->lastMobj != NULL) + (b->teammate != NULL);
+        nd += (b->destNode != NULL);
+        for( n = b->path ? b->path->first : NULL; n; n = n->vnext )  ns++;
+    }
+    if( nb == 0 )  return;
+    printf( "TEST: bots at level start: %d bots, %d pointers, %d destinations, %d path nodes\n",
+            nb, np, nd, ns );
+    fflush( stdout );
+}
+
 int TestDump_UnpauseDelay( unsigned int now )
 {
     static int n = -1;

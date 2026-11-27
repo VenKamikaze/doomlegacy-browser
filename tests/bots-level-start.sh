@@ -14,7 +14,9 @@
 # something to see. The first record of the new level (the first with map 4, level time 0) must
 # show, for every bot: no destination, no path, and every one of the eight mobj pointers
 # NULL or the number of a live mobj of the new level (a pointer the old level left shows as -2:
-# not a live thinker).
+# not a live thinker; the new level reuses the old one's memory, so that alone can be fooled).
+# B_Level_Start also prints how many pointers, destinations and path nodes are set when it
+# is done ("TEST: bots at level start"): the last call, for the new level, must say 0 of each.
 # Exit status: 0 pass, 1 fail, 2 bad set-up.
 set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -71,5 +73,15 @@ else:
 sys.exit(fail)
 PY
 fail=$?
+# The strict check: B_Level_Start itself counts what is still set when it is done (the hash
+# looks a pointer up by address in the new level's thinkers, and the new level reuses the memory
+# the old one freed, so a stale pointer can look live there). The last line is the new level's.
+line="$(grep -a '^TEST: bots at level start' "$work/out.txt" | tail -n 1)"
+echo "B_Level_Start, last call: ${line#TEST: bots at level start: }"
+if printf '%s' "$line" | grep -q ': 3 bots, 0 pointers, 0 destinations, 0 path nodes$'; then
+    echo "  ok   B_Level_Start leaves no pointer, no destination and no path node set (3 bots)"
+else
+    echo "  FAIL B_Level_Start left something set, or did not run for the new level"; fail=1
+fi
 if [ "$fail" = 0 ]; then echo "bots-level-start: PASS"; else echo "bots-level-start: FAIL"; fi
 exit "$fail"
