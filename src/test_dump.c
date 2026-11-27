@@ -24,6 +24,8 @@
 //                         console command "addbot" does.  The command line's +addbot
 //                         runs before the level starts, and the first bot then takes
 //                         the host's own player slot.
+//   -testcmd TIC TEXT     (F3 fix round 1) at game tic TIC run the console command TEXT
+//                         (for example "map e1m4"); may be given several times
 //   -testcensus           print how many thinkers of each kind the level has,
 //                         each time one of the counts reaches a new maximum
 //   -testsizes            print the bytes one record of each sector effect takes
@@ -65,6 +67,7 @@
 #include "r_main.h"
 #include "r_draw.h"
 #include "console.h"
+#include "command.h"
 #include "hu_stuff.h"
 #include "am_map.h"
 #include "i_system.h"
@@ -664,6 +667,9 @@ static tic_t  testquit_tic = 0;
 static const char *  testload_file = NULL;
 static int  options_read = 0;
 static int  census_on = 0;
+#define MAX_TESTCMD  8
+static struct { tic_t tic; const char * text; } testcmd[MAX_TESTCMD];
+static int  num_testcmd = 0;
 static tic_t  addbots_tic = 0;
 static int  addbots_count = 0;
 
@@ -686,6 +692,13 @@ static void read_options( void )
     i = M_CheckParm( "-testload" );
     if( i && M_IsNextParm() )  testload_file = M_GetNextParm();
     census_on = M_CheckParm( "-testcensus" );
+    for( i = 1; i + 2 < myargc && num_testcmd < MAX_TESTCMD; i++ )
+    {
+        if( strcmp( myargv[i], "-testcmd" ) != 0 )  continue;
+        testcmd[num_testcmd].tic = (tic_t) atoi( myargv[i + 1] );
+        testcmd[num_testcmd].text = myargv[i + 2];
+        num_testcmd++;
+    }
     i = M_CheckParm( "-testaddbots" );
     if( i && i + 2 < myargc )
     {
@@ -938,6 +951,14 @@ void TestDump_Tic( void )
         load_savegame( name );
     }
 
+    for( i = 0; i < num_testcmd; i++ )
+    {
+        if( testcmd[i].tic == gametic )
+        {
+            COM_BufAddText( testcmd[i].text );
+            COM_BufAddText( "\n" );
+        }
+    }
     if( addbots_count && gametic == addbots_tic && server )
     {
         // as the console does; the bots exist at the next tic
