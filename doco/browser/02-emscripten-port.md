@@ -159,4 +159,97 @@ The wasm tests must not become much slower. Today they run `-timedemo` as fast a
 
 ## Outcome
 
-(to be filled in by the implementer, then the coordinator)
+Status: **done by the implementer, 27 Nov 2026** (branch `browser/02-emscripten-port`; the coordinator reviews, and a person plays it in Chromium and Firefox: AC9). Single-player Freedoom runs in a page that stays responsive, with keyboard, mouse, sound effects, and a config and savegames that survive a reload. `tests/demo-hash.sh` 11 of 11, `tests/savegame-portable.sh` 117 of 117 and `tests/bots-native-wasm.sh` identical on the ASYNCIFY build; the demo tests run within 5 percent of their old time. Not tested: Firefox (not in the container), a real GPU, a real sound card or mouse, a person playing, music (off: M1).
+
+**What landed**
+
+- **Yields (D6), `src/i_web.h`, `src/sdl/i_web.c`.** `-sASYNCIFY`, defaults kept. One wait for the next display frame (`requestAnimationFrame`, 100 ms in a hidden tab) per presented frame (`I_FinishUpdate`) and per pass of `D_DoomLoop` (`I_Web_PassEnd`: a pass with no new tic would spin, L7); a yield from the event pump after 8 ms without one (`I_Web_Poll`); a 1 ms timer wait in the loops that spin on the clock (the wipe, `Net_Wait_AllAckReceived`, the quit sound: `I_Web_Idle`); `I_Sleep` yields; SDL's own yields (`SDL_Delay`, the buffer swap) are switched off with `SDL_HINT_EMSCRIPTEN_ASYNCIFY` so that every yield is ours. `code-facts.md` section 6 lists every loop and where it yields. **Test pacing** (`?test=1&fast=1`): a yield is a message to the page itself, once 20 ms have passed since the last, and the canvas is hidden (see the findings), so `-timedemo` runs as fast as the CPU allows.
+- **Exits.** `exit()` reaches `Module.onExit`: the overlay returns with "The game has ended." (status 0) or "The game stopped with an error (exit status N)" and the game's own words (`Error:` and the lines before it that say what it could not find), and a reload button. The 3 s `I_Sleep` before `exit` is left out under `__EMSCRIPTEN__`. **The launcher's "press ESC" loop (L18): chosen: the game ends.** Under `__EMSCRIPTEN__` a fatal start-up error calls `I_Error("Cannot start the game. See the warnings above.")` instead of showing the console and the launcher, which has nothing to offer in a page; the page shows the warnings. (Both loops would have yielded through `I_FinishUpdate` anyway.)
+- **Page, `web/`** (built into `build/wasm/bin` with `legacy.wad`; `scripts/serve-wasm.sh` serves it with `testdata/`): click to start (the audio opens inside the click), progress and status line, errors on the page, the canvas scaled to the window (a 640x480 window, shown 4:3), pointer lock, Escape, the keys the game uses kept from the browser, IDBFS at `/persist` (`-home /persist`), the dev data loader (`?iwad=URL`, default `freedoom1.wad` next to the page; `legacy.wad` next to the page), test hooks only with `?test=1` (listed at the top of `web/page.js` and in `building.md` section 7).
+- **Mouse.** The game's mouse code warps the pointer, which a page cannot do (L56). `I_GrabMouse` and `I_UngrabMouse` now tell the page (`I_Web_MouseGrab`); the page locks the pointer when the game wants the mouse and the player clicks (or at once if the last click or key press is recent), and sends each movement to `dl_mouse_motion`, which posts the same `ev_mouse` event the relative branch of `I_GetEvent` posts. SDL's own relative mouse mode is not used.
+- **Files.** The game saves its config when its menu closes (L55; upstream only at quit). The page writes `/persist` to IndexedDB 10 ms after the game closes a file there (not `log.txt`), once a second as a net, on `visibilitychange` and `pagehide`, with a queue, as jfsw-browser's does.
+- **Runner.** `tests/tools/run-wasm.js` now drives the page that users get (`?test=1&fast=1&...`): the tests run what users run, with three differences, all on purpose: the test pacing, the canvas hidden, and the video mode left to the game (`video=native`) so that the tests keep drawing the size they drew before (L57). It waits for the page's end state, not for `callMain`. Same options as before, plus `--paced` and `--fastms`.
+- **Compiled out:** nothing needed to be: the build has no `fork`, `exec`, threads or CD-audio code.
+- **Tests** (`building.md` section 11): `tests/web/smoke.js`, `demo-page.js`, `persist.js`, `exits.js`.
+- **Reused from jfsw-browser** (the user's own work, GPL): the page's overlay, status and error handling; the Escape under pointer lock (`pointerlockchange` without a release by the game: a made-up Escape); the quiet handling of refused pointer lock and audio resume; the IDBFS sync queue with the `FS.close` wrap; the blank-canvas check (an element screenshot, proved on blank pictures); `tests/web/lib.js` helpers. Not reused: the data loader and cache (brief 03), the lobby (brief 04), the Firefox test.
+- **Fixed on the way** (`bugs.md`): L7 and L18 for the browser build; new L55 (config saved only at quit), L56 (the mouse code needs warping), L57 (the default "fullscreen" mode is the window), L58 (headless Chromium stalls a page while the pointer is locked: an environment quirk). `tests/asan-known.txt`: the one known `i_system.c` site moved from line 575 to 578 because of the lines added above it (same code).
+
+**Commits** (branch `browser/02-emscripten-port`): `6d293ad` yields, page, runner; `d369aa2` page-managed pointer lock and the browser tests; `07fda3c` docs, asan-known line; the last commit has this Outcome.
+
+**Acceptance criteria**
+
+1. **AC1 clean build: pass.** A fresh `git clone` of the branch, `EM_CACHE=/tmp/cc/emcache` (empty) with `scripts/setup-emsdk.sh --with-ports` (seeded sdl2, ogg, vorbis, sdl2_mixer in 2.7 s) and `scripts/build-wasm.sh`: rc 0 in **37 s**, no "download", "fetch" or "403" in the log, and the page files next to the game. `scripts/build-native.sh` in the clone: rc 0, and the objects of `i_system.c`, `i_video.c`, `d_net.c` and `m_menu.c` are byte for byte the ones of the commit before; `d_main.o` differs only by the `__TIME__` string. **The native build is unchanged.**
+2. **AC2 smoke test: pass, `smoke.js` 34 of 34.** Canvas not blank (80 colours); the menu opens on Escape and the skull moves on Down and Up; no error. **The blank check is proved to fail:** it counts the canvas before the game starts, a one-colour and a two-colour picture as blank (and a 12-colour one as not), and `SMOKE_SABOTAGE=blank` hides the canvas after the game drew: `FAIL the canvas is not blank (1 colours ...)`. **The key check fails without a key:** `SMOKE_SABOTAGE=nokey`: the skull never appears, 4 checks fail. Also: audio device open, AudioContext running, sound effects reach the output (`nosound` fails it); pointer lock, mouse look, Escape (`nomouse`, `unlockedmouse`, `noesc` each fail one check).
+3. **AC3 responsive: pass.** While the page plays `d1demo3` at its normal pace (62 s), a 20 ms timer and an animation-frame callback of the page itself ran 3,116 and 3,739 times after the first second: **largest gap 38 ms and 17 ms** (limit 250). The check fails when it should: `noyield` (the game yields only every 5 s): gaps of 10 s and 5 s; `block` (the page blocks 400 ms every 5 s): gaps of 407 and 400 ms. With the pointer locked headless Chromium stalls (see AC5).
+4. **AC4 determinism: pass.** `tests/demo-hash.sh` **11 of 11 identical** (the same 11 files as before, every run exits 0). `tests/savegame-portable.sh` **117 passed, 0 failed**, 14 saves. `tests/bots-native-wasm.sh` **identical, 2,800 records, 557 aim calls**. **A demo played by the page itself at its normal pace** (`demo-page.js`, `d1demo3`, `-playdemo -testdump`): **identical to the native file, 2,134 records**; it differs from `fd1demo4`'s native dump at tic 1, and `DEMO_PAGE_SABOTAGE=other` (compare with that file) fails the check. No native-against-wasm difference was found, so there is no first differing tic to report.
+5. **AC5 frame time: pass for the page, with a caveat for the game and the lock.** Over 62 s of `d1demo3` (after the first second), pointer unlocked, normal pacing, headless Chromium, 4 cores, nothing else running: **the page's animation frames: median 16.7 ms, p95 16.7, p99 16.8, max 16.8** (the page keeps 60 Hz while the game runs). **The game's presented frames: median 33.1 ms, p95 34.1, p99 35.2, max 44.6**: the game draws only when a tic is due (35 a second, `code-facts.md` section 12), so a frame is one or two display frames; no stall over 100 ms. **With the pointer locked** (`DEMO_PAGE_LOCK=1`) headless Chromium here stalls: animation frames p95 83 ms, p99 200, max 400; a bare WebGL page that only uploads a texture and draws it, with the lock granted, gave median 16.7, p95 167, p99 583, max 2,166 (`bugs.md` L58). So the lock is the environment, not the port; a person on real hardware will show whether a real browser does it.
+6. **AC6 persistence: pass, `persist.js` 12 of 12.** A setting (`soundvolume 7`) and a saved game survive a reload; the game holds the setting and loads the save (the picture is the saved one, 1,568 pixels differ, against 312,911 from the first view). The control run without IDBFS loses both. **`PERSIST_SABOTAGE=nosync`** (the page never writes to IndexedDB): 4 checks fail.
+7. **AC7 exits: pass, `exits.js` 14 of 14.** A quit from the menu ends on "The game has ended." with a reload button. A missing IWAD URL: the page says which file and the 404. A missing IWAD for the game: ends in 0.7 s with the game's words ("IWAD /work/freedoom1.wad not found / Cannot start the game"), status -1, no launcher loop. A file that is no IWAD: the same. `EXITS_SABOTAGE=silent` (the page ignores the exit): 3 fail.
+8. **AC8 other tests: pass.** Native, on the rebuilt binary: `draw-independence.sh` PASS (93 s); `sprite-column-oob.sh` 6 of 6 (60 s); `savegame-malformed.sh` 8 of 8 (after the asan-known line fix; 56 s with the ASan build); `bots-level-start.sh` PASS (21 s); `tests/net/test-hot-join.sh` PASS (57 s); `test-relay.sh` PASS (96 s), `--dedicated` PASS (44 s); `test-relay-errors.sh` PASS (143 s); `savegame-old.sh` 12 of 12 (133 s). **`tests/asan-demos.sh`: 53 sites, 53 known, 0 new** (234 s). **`scripts/run-headless.sh --timeout 400`: all 11 demos exit 0**, 63 to 206 s each, as before (its default timeout of 120 s stops the long demos: it exits 124 for `fd1demo1`, as it did). Not a regression: the hot-join comparison inside `asan-demos.sh` (the ASan build, reports only) prints FAIL; the same happens with the ASan build of the commit before this brief.
+9. **AC9 a person can play:** pending (steps below).
+
+**Test times, before and after** (4 cores, one test at a time; before = the commit before this brief)
+
+| Test | Before | After |
+|---|---|---|
+| `tests/demo-hash.sh` (11 demos) | 339 s | 354 s (1.04 times) |
+| `tests/savegame-portable.sh` | 578 s | 581 s |
+| `tests/bots-native-wasm.sh` | 86 s | 83 s |
+| `run-wasm.js`, `d1demo3` `-timedemo -testdump` alone | 14.6 s (14.2 to 14.8) | 15.0 s (14.4 to 15.6); the same build without ASYNCIFY through the new runner 14.3 s |
+| new: `tests/web/smoke.js`, `persist.js`, `exits.js`, `demo-page.js` | | 33 s, 75 s, 13 s, 95 s |
+
+(A first measurement, 25 s for `d1demo3`, was the canvas: see the findings.)
+
+**The ASYNCIFY cost** (`-O2`, defaults, `ASYNCIFY_STACK_SIZE` 262,144)
+
+- Size: `doomlegacy.wasm` 2,033,478 bytes without (`NOASYNC=1`, yields compiled out) against 2,782,052 with: **+36.8 % raw, +20.9 % gzipped (853,948 to 1,032,816)**; `doomlegacy.js` 187,102 to 195,652 (gzipped 47,994 to 50,024). The download, `.wasm` and `.js` gzipped, is about 1.08 MB instead of 0.90 MB (plus `legacy.wad` 962 KB and the IWAD). The old build before this brief: `.wasm` 2,033,289, `.js` 180,178.
+- Speed: **the demo tests are 3 to 5 percent slower** (15.0 s against 14.3 to 14.6 s above). Time between yields at normal pacing, `d1demo3`, 4,049 yields in 2,000 tics: the game's own work between yields **median 1.2 ms, p95 2.5, p99 3.5, max 79.5 (a level start)**; **rewinding the stack after a yield median 0.1 ms, p99 0.2, max 2.0**; the page's wait median 15.0 ms (a display frame). Under test pacing the work between yields is 20 ms (the setting), rewind the same 0.1 ms.
+- Why defaults: with them every function that has an indirect call counts as one that may yield (`-sASYNCIFY_ADVISE=1` lists them), so the renderer and the thinker loops are instrumented; that costs size and almost no speed. `ASYNCIFY_REMOVE` of `R_RenderPlayerView` is **not safe**: it trapped (`unreachable`) at the first frame, because something under it reaches a yield. `ASYNCIFY_IGNORE_INDIRECT` was not tried: the paths from indirect calls to a yield are the menus and the console commands, and listing them by hand would be a risk for 37 percent of size.
+
+**Findings and corrections**
+
+- **A hidden canvas for the tests, and why.** The first ASYNCIFY runs of `d1demo3` took 25 s against 15 s. The game itself was not slower (work between yields 1.2 ms): headless Chromium without a GPU reads every presented frame back from WebGL and the game waits for it (3.6 s of `ReadPixels` waits in 500 tics in a trace), and the old runner never returned to the browser, so it never composited. With the canvas hidden (`display: none`) there is nothing to composite and the time is the old one. Only test pacing hides it; the page a user gets does not.
+- **Pointer lock in headless Chromium stalls the page** (`bugs.md` L58). Found while measuring AC3 and AC5: the stalls were first taken for SDL's relative mouse mode, then for the game; a bare WebGL page with a locked pointer showed the same, and the same game without the lock is smooth. The mouse went the page-managed way all the same (the page knows when a user gesture allows the lock, and the test can switch it off with `nolock=1`); the stalls were not the reason. `?nolock=1` is the test switch.
+- **Text keys.** Preventing the default of Space's `keydown` stops the browser's `keypress` and with it SDL's text input: a space typed in the console was lost. The page stops those keys (Space, `'`, `/`) at `keypress`, and the page cannot scroll (`overflow: hidden`). SDL, left alone, keeps the default of F5, F11, F12 and Ctrl+R: the page stops those before SDL sees them.
+- `-playdemo` of a bad demo or `-warp 1 99` leave the game in the title loop (L4), as before; the runner's `--timeout` is the net.
+- The default `fullscreen "Yes"` made the canvas as large as the window (L57).
+- `SDL_AUDIODRIVER=dummy` opens no device in a build without threads ("Couldn't create audio thread startup semaphore"); the game runs without sound. The tests pass `-nosound` anyway.
+
+**Decisions for the coordinator**
+
+1. **ASYNCIFY with the defaults, +37 % on the `.wasm`.** Kept for safety; if download size matters later (brief 03 caches it), trimming is a measured job of its own.
+2. **The page locks the pointer, not SDL** (above). If M1 or 04 wants SDL's mouse back, `I_Web_MouseGrab` is the one place.
+3. **The launcher is not offered in a browser** (L18): a fatal start-up error ends the game with a message. If you want the launcher's choices (another IWAD, a home) in a page, that is brief 03's data picker, not the launcher.
+4. **The config is saved when a menu closes** (L55). A setting changed only from the console is not saved until then. Say if that should be tighter (a save after every `CV_Set` is a bigger change in upstream code).
+5. **The page plays in a fixed 640x480 window** (L57); the video-mode menu is untouched and a mode change from it is **not tested**.
+6. **The tests hide the canvas and use `nolock=1`** (findings). The numbers that matter for play (AC5 with the lock, a real GPU) need a person on real hardware.
+7. **Music is off** (`-nomusic` is always passed); M1 changes that one argument.
+8. The game draws 35 frames a second by design; a smoother picture is an interpolation project, not a port one.
+
+**Left over**
+
+- AC9: play-test (steps below), in Chromium and Firefox. Firefox's keyboard, the real Escape and the real pointer lock (headless gave synthetic events and a stalling lock) are the things only a person can check.
+- Not tested: a mode change from the video menu; a savegame made in a game with a PWAD (`-file` has no page switch yet); `?iwad=` from another origin (needs CORS headers); the hidden-tab behaviour (the yields fall back to a 100 ms timer, so the game then runs at 25 percent speed or less, like jfsw-browser's; it is a pause, nothing is lost).
+- Brief 04 will meet the hidden-tab problem in lockstep: a hidden peer sends its tics about once a second.
+
+**Play-test steps** (Arch Linux, pacman)
+
+```
+sudo pacman -S --needed base-devel git unzip python nodejs npm
+git clone --recurse-submodules -b browser/02-emscripten-port https://github.com/VenKamikaze/doomlegacy-browser
+cd doomlegacy-browser
+scripts/setup-emsdk.sh --with-ports       # Emscripten 6.0.13 and its ports, about 300 MB, into ~/.cache/doomlegacy-browser/emsdk
+scripts/build-wasm.sh                     # about a minute the first time
+scripts/fetch-test-data.sh                # Freedoom and the shareware IWAD into testdata/
+scripts/serve-wasm.sh                     # prints http://127.0.0.1:8000/
+```
+
+Open it in Chromium, then in Firefox. Click "Click to start". Escape opens the menu (Enter selects, arrows move). New Game, a skill, play E1M1: arrows move and turn, Ctrl fires, Space opens doors, 1 to 7 pick weapons. The game takes the mouse when a level plays: click the picture if it has not (the cursor goes), move the mouse to turn, click to fire; Escape gives it back and opens the menu; click again to take it. Check: sound effects; no key scrolls the page; F5 reloads; F12 opens the developer tools. Change a setting in Options (a volume), close the menu, save a game (F2, a slot, a name with a space in it), reload the page and load it (F3); check the setting is still there. Quit with F10 and Y: the page says the game has ended and offers a reload. Things only a person can check:
+
+- **The real Escape** with the mouse taken, in both browsers: it should give the mouse back and open the menu once (not twice).
+- **Firefox keyboard:** arrows, Ctrl, Shift, Space, number keys, F-keys.
+- **Pointer lock:** the mouse look is smooth (headless Chromium here cannot show it), and the click that takes the pointer also fires once.
+- **Audio latency:** the game asks for a small buffer; does shooting feel late?
+- **A private window:** IndexedDB can be unavailable; the page should start and say that saves and settings will not be kept.
+- **Frame time on real hardware:** `node tests/web/demo-page.js` (needs Node.js, Playwright with a Chromium, and a native build) prints the frame intervals; the page's animation frames should stay at about 16.7 ms.
+- **Ctrl is the fire key,** so Ctrl+W and Ctrl+Tab close or change the tab: nothing a page can stop.
