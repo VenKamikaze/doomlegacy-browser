@@ -53,8 +53,11 @@ void B_Send_all_bots_NameColor(void);
 void B_Regulate_Bots( int req_numbots );
 
 void B_forget_stuff( bot_t * bot );
-extern unsigned int  bot_atan_calls;  // for -testdump
-extern uint32_t  bot_atan_hash;
+extern unsigned int  bot_aim_calls;  // for -testdump
+extern uint32_t  bot_aim_hash;
+#ifdef BOT_AIM_COMPARE
+extern int  bot_aim_maxdiff;
+#endif
 int B_Get_speed_state( byte * frac, byte * tics );  // for -testdump
 
 void B_Destroy_Bot( player_t * player );

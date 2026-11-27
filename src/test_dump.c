@@ -686,12 +686,13 @@ static void read_options( void )
 // What the level holds that a savegame has records for: the number of each
 // kind of thinker, and of sectors with a soundtarget.  Printed when a savegame
 // is written and when it is loaded, to show what a save holds.
-#define CENSUS_KINDS  18
+#define CENSUS_KINDS  21
 static const char * const census_name[CENSUS_KINDS] =
 {
     "mobj", "ceiling", "stopped-ceiling", "door", "floor", "plat", "stopped-plat",
     "flash", "strobe", "glow", "fireflicker", "lightfade", "elevator",
-    "scroll", "friction", "pusher", "soundtarget", "thinker-total"
+    "scroll", "friction", "pusher", "soundtarget", "bot", "bot-dest", "bot-path-node",
+    "thinker-total"
 };
 
 static void take_census( int * c )
@@ -702,7 +703,7 @@ static void take_census( int * c )
     memset( c, 0, CENSUS_KINDS * sizeof(int) );
     for( th = thinkercap.next; th != &thinkercap; th = th->next )
     {
-        c[17]++;
+        c[CENSUS_KINDS - 1]++;
         switch( th->function )
         {
          case TFI_MobjThinker:    c[0]++;  break;
@@ -728,6 +729,15 @@ static void take_census( int * c )
     }
     for( i = 0; i < numsectors; i++ )
         if( sectors[i].soundtarget )  c[16]++;
+    for( i = 0; i < MAXPLAYERS; i++ )
+    {
+        const bot_t * b = players[i].bot;
+        const SearchNode_t * n;
+        if( ! playeringame[i] || ! b )  continue;
+        c[17]++;
+        if( b->destNode )  c[18]++;
+        for( n = b->path ? b->path->first : NULL; n; n = n->vnext )  c[19]++;
+    }
 }
 
 static void print_census( const char * what )
@@ -935,8 +945,12 @@ void TestDump_Tic( void )
     if( testquit_tic && gametic >= testquit_tic )
     {
 #ifdef SG_BOT_STATE
-        printf( "TEST: bot aim (atan) calls: %u, hash of the results %08x\n", bot_atan_calls,
-                (unsigned) bot_atan_hash );
+        printf( "TEST: bot aim calls: %u, hash of the aim values %08x\n", bot_aim_calls,
+                (unsigned) bot_aim_hash );
+#ifdef BOT_AIM_COMPARE
+        printf( "TEST: largest difference from libm atan: %d\n", bot_aim_maxdiff );
+        fflush( stdout );
+#endif
         fflush( stdout );
 #endif
         I_Quit();
