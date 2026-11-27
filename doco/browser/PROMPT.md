@@ -36,7 +36,7 @@ You work **one chunk at a time**. For each chunk you write a brief, have it impl
   - test data is Freedoom and `DOOM1.WAD`;
   - the git model is `claudeai`, `browser/NN-*` and `fix/*`.
 - **Not checked yet:** whether upstream SVN has fixed L1, L13, L15, L21 or L22, and whether its maintainer accepts patches. SourceForge can't be read from the cloud container; the user can check (F1's Outcome has the command).
-- **Next:** brief 02 (the Emscripten port), once the user says go. An optional L43 hardening (bounding the loader's indices, about 0.15 of 00) was offered for before 04; the user has not decided.
+- **Next:** brief 02 (the Emscripten port), started 27 Nov 2026. The user (27 Nov 2026) left the order and the optional L43 hardening to the coordinator, on token budget: the order stays 02, 03, F4, 04, and L43 hardening is **not queued** (logged only; pick it up if a hostile-peer brief needs it).
 
 ## 1. Read first, in this order
 
