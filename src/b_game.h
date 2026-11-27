@@ -53,6 +53,7 @@ void B_Send_all_bots_NameColor(void);
 void B_Regulate_Bots( int req_numbots );
 
 void B_forget_stuff( bot_t * bot );
+void B_Level_Start( void );
 extern unsigned int  bot_aim_calls;  // for -testdump
 extern uint32_t  bot_aim_hash;
 #ifdef BOT_AIM_COMPARE

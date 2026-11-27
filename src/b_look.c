@@ -241,7 +241,7 @@ byte regulate( mobj_t * mo, int id, int on_time, int period_time )
     // history, 32 or 64 bit), and every machine runs this bot.  The bot's mobj is
     // the one asked about, and a player number tells the bots apart.
     int mobjid = mo->player? (mo->player - players) : 0;
-    int pr = (gametic + id + (mobjid>>1)) % period_time;  // periodic ramp
+    int pr = (gametic + id + mobjid) % period_time;  // periodic ramp
     
     if( mo->health < 5 ) // more desperate
     {

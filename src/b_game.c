@@ -660,7 +660,8 @@ int  bot_aim_maxdiff = 0;
 // arithmetic only.  This replaces a call to libm's atan, which is not the same function on
 // every machine (glibc, Emscripten's musl): every machine runs every bot, and a bot that
 // aims one unit differently is a desync.  The table steps are ANG45/2048, so the result is
-// within a few units of the 16 bit aiming angle (cmd.aiming) of what atan gave.
+// within 3 units of the 16 bit aiming angle (cmd.aiming) of what atan gave (the slope is
+// rounded to the nearest table entry; cut off, it was 6).
 static
 signed_angle_t B_Slope_Angle( fixed_t dz, fixed_t dist )
 {
@@ -672,13 +673,13 @@ signed_angle_t B_Slope_Angle( fixed_t dz, fixed_t dist )
     if( num == 0 )  return 0;
     if( num <= den )
     {
-        slope = (uint32_t)((num << SLOPEBITS) / den);  // den > 0 here
+        slope = (uint32_t)(((num << SLOPEBITS) + den / 2) / den);  // den > 0 here
         if( slope > SLOPERANGE )  slope = SLOPERANGE;
         ang = tantoangle[ slope ];
     }
     else
     {
-        slope = (uint32_t)((den << SLOPEBITS) / num);
+        slope = (uint32_t)(((den << SLOPEBITS) + num / 2) / num);
         if( slope > SLOPERANGE )  slope = SLOPERANGE;
         ang = ANG90 - tantoangle[ slope ];
     }
@@ -1687,6 +1688,27 @@ void  B_forget_stuff( bot_t * bot )
 {
     bot->destNode = NULL;
     B_LLClear( bot->path );
+}
+
+// At every level start, on every machine: what a bot holds from the level before is
+// gone, a destination and path in the old grid and pointers to mobjs the level change
+// freed.  B_SpawnBot does it for a bot that is spawned, but not for a bot that is the
+// console player (bugs.md L48), and it leaves closestMissile.  A savegame writes
+// these, so none may point into freed memory.
+void  B_Level_Start( void )
+{
+    int i;
+    bot_t * bot;
+
+    for( i = 0; i < MAXPLAYERS; i++ )
+    {
+        bot = players[i].bot;
+        if( ! bot )  continue;
+        B_forget_stuff( bot );
+        bot->bestSeenItem = bot->bestItem = NULL;
+        bot->closestEnemy = bot->closestMissile = bot->closestUnseenEnemy = NULL;
+        bot->closestUnseenTeammate = bot->lastMobj = bot->teammate = NULL;
+    }
 }
 
 void  B_Destroy_Bot( player_t * player )

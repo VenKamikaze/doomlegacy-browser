@@ -91,6 +91,7 @@ SearchNode_t* B_GetNodeAt(fixed_t x, fixed_t y);
 SearchNode_t* B_GetClosestReachableNode(fixed_t x, fixed_t y);
 boolean B_NodeReachable(mobj_t* mo, fixed_t x, fixed_t y, fixed_t destx, fixed_t desty);
 void B_Init_Nodes(void);
+uint32_t B_Grid_Hash(void);  // for -testdump
 
 #endif
 
