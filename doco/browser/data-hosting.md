@@ -160,3 +160,11 @@ Modules: `mod_mime`, `mod_filter` (for `AddOutputFilterByType` in 2.4), `mod_def
 - It downloads with a progress bar, hashes the bytes (`crypto.subtle` SHA-256: 7 ms for this file; a page served over plain `http` from a LAN address has no `crypto.subtle`, and the page falls back to a JavaScript SHA-256: 42 ms), and refuses the file unless it matches `config.js`. A refused file is never cached and the game is not started.
 - Every failure is a message on the page that names the file or the URL and offers "Use your own copy..." and "Try again": an HTTP error (404, 403, 500), a blocked or failed request (with the CORS hint), a cut-off download, a wrong file (the size and SHA-256 found against the expected ones), a file that is no IWAD.
 - If the browser cannot keep the file (IndexedDB unavailable, as in some private windows; no space), the game starts anyway and says that the data will be downloaded again next time.
+
+## The relay for network games (brief 04)
+
+`web/config.js` has one more entry, `relay`, next to `data`. It is the vnet relay's WebSocket URL: `ws://HOST:PORT/vnet` for a trial, `wss://HOST/vnet` behind TLS in production. The default is `''`: the page offers no network game, and the game refuses `-relay` with a message. Brief 06 writes the deployment (the relay behind Caddy or nginx, the WebTransport port, certificates); until then:
+
+- The page passes `relay` to the game, which asks vnet for `VNET_BACKEND_RELAY_AUTO`: with a `wss://` URL it also tries WebTransport at `https://` + the same host, port and path (3 s), and falls back to the WebSocket. The relay needs `-wt ADDR` with `-wt-cert` and `-wt-key` for that (`ext/vnet/relay/README.md`); the WebSocket endpoint stays up as the fallback. The game logs which one it got (`vnet: transport relay-wt` or `relay-ws`).
+- `-origins HOST[:PORT]` on the relay must be the page's host (and port, if not the default).
+- Only a test page (`?test=1`) can take a relay, a WebTransport URL (`relay_wt=`), the SHA-256 of a `-dev-cert` certificate (`relay_cert=`) or an impairment (`impair=`) from its address, so that a crafted link cannot send visitors to another relay. There is no menu or lobby yet (brief 05): a game is started with test arguments (`?test=1&args=-server%202`).
