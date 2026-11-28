@@ -106,7 +106,7 @@ F3 (merged). Before 04.
 
 ## Outcome
 
-Status: **done by the implementer, 28 Nov 2026 (review pending).** All eight criteria pass, on the final commits; the code changed after the first full runs of AC2, AC3 and AC5 (the zeroed thinkers, below), so a smaller set was run again on the final code (counts below).
+Status: **done, 28 Nov 2026 (merged into `claudeai`).** Reviewed twice (verdicts: merge after fixes; merge after a one-line fix), two fix rounds, coordinator verification at `ad02645` (below). All eight criteria pass, on the final commits; the code changed after the first full runs of AC2, AC3 and AC5 (the zeroed thinkers, below), so a smaller set was run again on the final code (counts below).
 
 **What landed** (commits on `browser/F4-hot-join-lossy`, in order)
 - `e1cf486` `-testimpair SPEC` (`test_dump.c`, called from `HSendPacket`): a seeded lossy send for any driver, no root; `test-hot-join.sh --lossy SPEC --seed N --runs N`.
@@ -210,3 +210,39 @@ Re-run after the fixes, one at a time, on the final tree: `servertic-sections.sh
 - **10150 savegames written by the tree from `c58a1c9` to `5303ed1` have no pause byte (added in `608d06c`) and will not load.** 10150 was never merged, so the version number was not raised; `code-facts.md` §8 says so.
 - `test-drone.sh` and `test-two-joiners.sh` no longer print bash's "Killed" job messages.
 - Re-run: `demo-hash.sh` 11 of 11 (297 s; demo playback unaffected); `test-drone.sh` PASS (16 s); `test-two-joiners.sh` PASS (34 s); one plain hot join PASS (57 s); one lossy hot join PASS (56 s); `savegame-f3.sh` 10 of 10 (210 s); `savegame-portable.sh` savegame-portable: 117 passed, 0 failed, 14 saves, 577 s.
+
+### Review and coordinator verification
+
+Review: an independent read-only review in a separate worktree at `5303ed1` (merge after fixes: the hold froze the server for a drone, L35 cause B only partly fixed, statistical failure proofs, a second joiner during a wait, the text-command limit, the sender of `XD_NETWAIT`, two checks that took either of two messages); a re-review at `17b514c` (merge after a one-line fix: the demo exception of `XD_NETWAIT`; `tic_hold` after a demo; §8). Fix round 2 changed no behaviour of the join, so it was not reviewed again. The reviewer reproduced the drone freeze and the cause-B sequence, and checked the failure of `test-drone.sh`, `test-two-joiners.sh` and `servertic-sections.sh` with their fixes reverted.
+
+Coordinator verification at `ad02645`, one test at a time on 4 cores, after a clean native and wasm rebuild (the coordinator also read the netcode and savegame diffs). To save time, as the user asked, the 30-run batches of the plain and `--bots` hot join were not repeated: the implementer's 30 of 30 each (before fix round 1) and 10 of 10 each (after it) stand for them.
+
+| Test | Result | Time |
+|---|---|---|
+| `pause-order.sh` | 285 cases, 0 failures | 1 s |
+| `servertic-sections.sh` | 5 of 5 | 0 s |
+| `test-drone.sh` | PASS | 16 s |
+| `test-two-joiners.sh` | PASS (B identical to the server) | 34 s |
+| `bots-native-wasm.sh` | identical, 2,800 records, 557 aim calls | 84 s |
+| `bots-level-start.sh` | PASS | 21 s |
+| `savegame-malformed.sh` | 8 of 8 | 50 s |
+| `savegame-portable.sh` | 117 of 117, 14 saves | 576 s |
+| `savegame-old.sh` | 12 of 12 | 209 s |
+| `savegame-f3.sh` | 10 of 10 | 210 s |
+| `test-hot-join.sh`, `--together`, `--no-force`, `--walk 330 400` | PASS each | 46-57 s each |
+| `test-hot-join.sh --bots`, `--bots --together`, `--bots --no-force` | PASS each | 46-57 s each |
+| `test-hot-join.sh --lossy loss=3,dup=2,reorder=3 --seed 1001 --runs 5` | 5 of 5 | 282 s |
+| `test-hot-join.sh --bots --lossy loss=3,dup=2,reorder=3 --seed 2001 --runs 3` | 3 of 3 | 171 s |
+| `test-relay.sh` (clean and the default impairment) | PASS | 92 s |
+| `test-relay.sh --impair-only --runs 5` | 5 of 5 | 250 s |
+| `test-relay.sh --bots --runs 3` | clean 3 of 3, impaired 3 of 3 | 285 s |
+| `test-relay.sh --dedicated` | PASS | 44 s |
+| `test-relay-errors.sh` | PASS | 143 s |
+| `sprite-column-oob.sh` | 6 of 6 | 61 s |
+| `draw-independence.sh` | PASS, 3,136 records | 92 s |
+| `demo-hash.sh` | 11 of 11 | 301 s |
+| `tests/web/`: `smoke.js`, `demo-page.js`, `persist.js`, `exits.js`, `data.js`, `iwad-table.js` | 36, 11, 12, 18, 159, 40 passed, 0 failed | 33, 88, 69, 13, 40, 1 s |
+| `asan-demos.sh --rebuild` | 53 sites, 53 known, 0 new; its hot join PASS | 233 s |
+| fresh clone of the branch, empty `EM_CACHE`, `setup-emsdk.sh --with-ports`, `build-wasm.sh`, `build-native.sh` | rc 0 | 42 s and 9 s |
+
+For brief 04: L63 and L64 (the server does not wait for a joiner's download; a joiner more than 32 tics behind cannot catch up), L29 now passes its ASan reproduction but stays open for a throttled browser joiner, and L68 (the L67 pattern at the level start and at run time) is a heap-dependent desync risk between native and wasm machines that is not yet seen.

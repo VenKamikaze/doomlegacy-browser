@@ -7,7 +7,7 @@ The goal is Doom Legacy playable in a browser (Emscripten/WASM), **with its musi
 **Read first:**
 - [`survey.md`](survey.md): the feasibility survey of 19 Nov 2026 (copied as delivered), which chose Doom Legacy and lists the seams, risks and file:line refs.
 - [`building.md`](building.md): set-up, native build, test data, headless run and Emscripten.
-- [`bugs.md`](bugs.md): upstream bugs and quirks found so far. L1 (an x86_64 crash whenever a sprite is drawn) is fixed by F1; L15 (level start reads unfilled map things) is fixed in 00; L19 (the savegame was not portable between 64-bit native and wasm32) and L30 (it did not hold the sector `soundtarget`) are fixed by F2, together with five more things a savegame lost (L36 to L40); L31, L35 and L54 (a join in progress under reordered or lost packets) came out of 01 and F3 and are fixed by F4 (done by the implementer, review pending), which also saves the walking bob in every game (L53).
+- [`bugs.md`](bugs.md): upstream bugs and quirks found so far. L1 (an x86_64 crash whenever a sprite is drawn) is fixed by F1; L15 (level start reads unfilled map things) is fixed in 00; L19 (the savegame was not portable between 64-bit native and wasm32) and L30 (it did not hold the sector `soundtarget`) are fixed by F2, together with five more things a savegame lost (L36 to L40); L31, L35 and L54 (a join in progress under reordered or lost packets) came out of 01 and F3 and are fixed by F4, which also saves the walking bob in every game (L53) and fixes L67 (a loaded sector effect sorted into a class-list by stale memory).
 - [`code-facts.md`](code-facts.md): what the sources say, with file:line refs: the survey's claims checked, the network driver, start-up, the join, consistency, blocking loops, floats, savegame portability, files, the music path, the state hash.
 
 ## Status
@@ -23,7 +23,7 @@ The goal is Doom Legacy playable in a browser (Emscripten/WASM), **with its musi
 | F3 | [Bots and joining a game in progress](F3-bots-hot-join.md) (`bugs.md` L23, L24; also L20, L45, L46, L51 to L53) | done, 27 Nov 2026 (bot aim without libm, a bot's whole state in the savegame; L54 logged for F4) |
 | 02 | [The Emscripten port](02-emscripten-port.md): ASYNCIFY yields in the blocking loops, a page with click to start, keyboard, mouse, sound effects, IDBFS for config and saves | done, 27 Nov 2026 (play-test pending: steps in its Outcome) |
 | 03 | [Data download](03-data-download.md): the page downloads the IWAD (default: shareware `DOOM1.WAD` from its own origin, D14), checks it, caches it in IndexedDB, a file picker for one's own copy, clear errors, hosting notes | done, 28 Nov 2026 (play-test pending: steps in its Outcome) |
-| F4 | [Hot join over a lossy link](F4-hot-join-lossy.md) (`bugs.md` L31, L35, L54, and L53 for games without bots): `PT_STATE` ordered by a sequence number, the causes of the lossy-join divergence found and fixed, the bob saved in every game, the impaired relay test the default again | done by the implementer, 28 Nov 2026 (review pending) |
+| F4 | [Hot join over a lossy link](F4-hot-join-lossy.md) (`bugs.md` L31, L35, L54, and L53 for games without bots): `PT_STATE` ordered by a sequence number, the causes of the lossy-join divergence found and fixed, the bob saved in every game, the impaired relay test the default again | done, 28 Nov 2026 (savegame 10150, `NETWORK_VERSION` 27; the pause travels in the tic stream as `XD_NETWAIT`; L68 logged) |
 
 ## Settled decisions
 
