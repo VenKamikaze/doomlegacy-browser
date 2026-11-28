@@ -151,7 +151,7 @@ Use Playwright with a local test server that can gzip, send ETags, add or omit C
 
 ## Outcome
 
-Status: **done by the implementer, 27 Nov 2026; review and play-test pending.** The page gets the shareware `DOOM1.WAD` from its own origin with a progress bar, checks it (size and SHA-256, or IWAD header and directory), keeps it in its own IndexedDB database and starts from it with no request on a reload; "Use your own copy..." takes any IWAD (cached, with a way back); every failure is a message on the page with the picker and "Try again". `tests/web/data.js` 138 of 138, `iwad-table.js` 17 of 17, 02's four page tests pass, `demo-hash.sh` 11 of 11, `savegame-portable.sh` 117 of 117, `bots-native-wasm.sh` identical. **No engine change** (`git diff 1ae4c18 -- src` is empty). Not tested: Firefox, a real network, a registered `DOOM.WAD`/`DOOM2.WAD`, the Apache examples (no Apache here), a person playing.
+Status: **done, 28 Nov 2026; the play-test is pending** (merged into `claudeai`). The page gets the shareware `DOOM1.WAD` from its own origin with a progress bar, checks it (size and SHA-256, or IWAD header and directory), keeps it in its own IndexedDB database and starts from it with no request on a reload; "Use your own copy..." takes any IWAD (cached, with a way back); every failure is a message on the page with the picker and "Try again". `tests/web/data.js` 138 of 138, `iwad-table.js` 17 of 17, 02's four page tests pass, `demo-hash.sh` 11 of 11, `savegame-portable.sh` 117 of 117, `bots-native-wasm.sh` identical. **No engine change** (`git diff 1ae4c18 -- src` is empty). Not tested: Firefox, a real network, a registered `DOOM.WAD`/`DOOM2.WAD`, the Apache examples (no Apache here), a person playing.
 
 **What landed**
 
@@ -216,7 +216,7 @@ Status: **done by the implementer, 27 Nov 2026; review and play-test pending.** 
 
 ```
 sudo pacman -S --needed base-devel git unzip python nodejs npm chromium firefox curl
-git clone --recurse-submodules -b browser/03-data-download https://github.com/VenKamikaze/doomlegacy-browser
+git clone --recurse-submodules -b claudeai https://github.com/VenKamikaze/doomlegacy-browser
 cd doomlegacy-browser
 scripts/setup-emsdk.sh --with-ports
 scripts/build-wasm.sh
@@ -276,3 +276,26 @@ Item 9 has no check. The worktree used for this round is `/home/user/review-03`.
 - **The `legacy.wad` test** now picks `legacy.wad` in lower case (MEMFS is case-sensitive, so `LEGACY.WAD` could never overwrite the file). `DATA_SABOTAGE=legacy` now fails the "untouched" check too: `/work/legacy.wad` went from 962,192 to 52 bytes (2 checks fail: untouched, and the cached record's name).
 - **Kept as it is:** a file's own engine name wins over its lumps, as for a native player; a Heretic file renamed `doom.wad` runs as the engine decides (also in `code-facts.md` section 14).
 - **Counts:** `data.js` 159 of 159, `exits.js` 18 of 18.
+
+**Review and coordinator verification (28 Nov 2026)**
+
+- **Independent review** of 1ae4c18..a3bc91e: no blockers, 1 should-fix, 10 nits.
+  - The should-fix: picked or `?iwad=` Heretic, Hexen and Strife files got Doom names, so the wrong game started.
+  - Fix round 1 (949d32a) fixed all 11. The re-review checked `classify()` against the engine's game table with full lump lists of every supported IWAD: each gets a name the engine accepts as the same game, with no misclassification either way.
+  - The re-review left 3 nits. Two were fixed in fix round 2 (13b705e): a cancelled pick deletes only its own record, and the `legacy.wad` test uses the exact name. The third is kept: a file's own engine name wins over its lumps, as natively.
+- **Coordinator verification at 13b705e**, every test one at a time after a clean rebuild:
+
+| Test | Result | Time |
+|---|---|---|
+| builds: native `--clean`, wasm clean, relay | rc 0 | 11 s, 12 s, 10 s |
+| fresh clone, empty `EM_CACHE`, `setup-emsdk.sh --with-ports` and `build-wasm.sh` | rc 0; `config.js`, `data.js`, `iwads.js` in `build/wasm/bin` | 38 s |
+| `tests/web/data.js` | 159 of 159 | 47 s |
+| `tests/web/iwad-table.js` | 40 of 40 | 0.2 s |
+| `tests/web/smoke.js`, `demo-page.js`, `persist.js`, `exits.js` | 36/36, 11/11, 12/12, 18/18 | 32 s, 95 s, 71 s, 16 s |
+| `demo-hash.sh` | 11 of 11 | 347 s |
+| `savegame-portable.sh`, `savegame-old.sh`, `savegame-malformed.sh` | 117/117, 12/12, 8/8 | 579 s, 133 s, 57 s |
+| `bots-native-wasm.sh`, `bots-level-start.sh` | identical (2,800 records, 557 aims), pass | 83 s, 21 s |
+| `test-hot-join.sh`, three modes, with and without `--bots` | 6 of 6 | 46-57 s each |
+| `test-relay.sh`; `--bots --runs 3`; `test-relay-errors.sh` | pass | 96 s, 283 s, 143 s |
+| `sprite-column-oob.sh`, `draw-independence.sh` | pass | 61 s, 92 s |
+| `asan-demos.sh --rebuild` | 53 known, 0 new (its hot-join comparison FAILs as before: L29) | 282 s |
