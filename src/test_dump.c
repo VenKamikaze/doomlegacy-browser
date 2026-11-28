@@ -29,6 +29,8 @@
 //   -testwalk FROM TO     the local player (the first one) walks forward, running, with
 //                         this machine's ticcmds built for game tics FROM to TO: a human
 //                         who is moving at the join, with no input device
+//   -testconnectpasses    (brief 04) every 2 s, while CL_ConnectToServer or the repair download
+//                         loop runs, print how many passes it made: "TEST: connect passes: ..."
 //   -testcensus           print how many thinkers of each kind the level has,
 //                         each time one of the counts reaches a new maximum
 //   -testsizes            print the bytes one record of each sector effect takes
@@ -78,7 +80,14 @@
 #include "p_saveg.h"
 #include "d_main.h"
 #include "d_clisrv.h"
+// (the page's quit request exists only in the browser build; a build from before brief 04, which
+// tests/savegame-old.sh compiles with this file copied in, has no i_web.h)
+#ifdef __EMSCRIPTEN__
 #include "i_web.h"
+#define TESTQUIT_ASKED()  I_Web_TestQuitAsked()
+#else
+#define TESTQUIT_ASKED()  0
+#endif
 #include "r_main.h"
 #include "r_draw.h"
 #include "console.h"
@@ -1012,7 +1021,7 @@ void TestDump_Tic( void )
             write_savegame( testsave[i].file, testsave[i].game_header );
     }
     // (the browser build: the page can ask for the same, window.dlTest.quit(), at the tic it likes)
-    if( ( testquit_tic && gametic >= testquit_tic ) || I_Web_TestQuitAsked() )
+    if( ( testquit_tic && gametic >= testquit_tic ) || TESTQUIT_ASKED() )
     {
 #ifdef SG_BOT_STATE
         printf( "TEST: bot aim calls: %u, hash of the aim values %08x\n", bot_aim_calls,

@@ -591,7 +591,7 @@ static void vn_failed(int code, const char * text, boolean host_silent)
     pending_count = 0;
 
     {
-        char msg[400];
+        char msg[640];   // error_text 200, relay_name 160, the room, the words
         if( host_silent )
             snprintf(msg, sizeof(msg), "vnet: cannot join room %s: %s", room_code, error_text);
         else

@@ -252,3 +252,53 @@ Notes on these:
 - The screen is read as an element screenshot: reading a WebGL canvas directly gives a blank picture.
 
 **Browser build, ASYNCIFY cost** (measured on `d1demo3`, the same runner): build size and the speed of the demo tests are in the brief 02 Outcome in [`02-emscripten-port.md`](02-emscripten-port.md).
+
+## 12. Browser netplay (brief 04)
+
+The wasm build links vnet (`scripts/wasm.mk` builds `ext/vnet/src/*.c` and `i_vnet.c` with `-DUSE_VNET`, links `-lwebsocket.js`; `flags.stamp` has `VNET=yes|no`). A fresh clone builds it with an empty `EM_CACHE` as before (about 25 s from scratch on 4 cores, no download).
+
+**Playing by hand** (a relay, the page, and a native player; ports are yours to pick):
+
+```bash
+scripts/build-relay.sh && scripts/build-wasm.sh && scripts/build-native.sh && scripts/fetch-test-data.sh
+build/relay/vnet-relay -udp 127.0.0.1:7777 -http 127.0.0.1:7778 -origins 127.0.0.1:8000 -v        # terminal 1
+scripts/serve-wasm.sh                                                                             # terminal 2: http://127.0.0.1:8000/
+# a browser host: open  http://127.0.0.1:8000/?test=1&relay=ws://127.0.0.1:7778/vnet&args=-server%202%20-warp%201%201   (the iwad: add &iwad=/freedoom1.wad)
+#   click "Click to start"; the room code is under the picture ("Hosting room ABC234 (WebSocket)") and in the console
+# a native joiner:
+build/native/bin/doomlegacy -iwad testdata/doom1.wad -relay 127.0.0.1:7777 -connect ABC234
+# a browser joiner: the same address with  args=-connect%20ABC234
+```
+
+For WebTransport add `-wt 127.0.0.1:4433 -dev-cert` to the relay and read `wt_cert_sha256=` from its `LISTEN` line, then add `&relay_wt=https://127.0.0.1:4433/vnet&relay_cert=HASH` to the page's address (a new hash at every relay start). `&impair=lat=30,jit=10,loss=3,dup=2,reorder=3,seed=7` makes the page's vnet lossy. All of these only work with `?test=1`. A page needs `relay` in `config.js` to offer a network game without them (`data-hosting.md`).
+
+**`tests/web/netplay.js`** (Playwright's Chromium, the native build, a relay of its own per game; run one scenario at a time, the games run in real time and each takes a core):
+
+```bash
+node tests/web/netplay.js --list
+node tests/web/netplay.js ws wt                 # these
+node tests/web/netplay.js --runs 3 impaired     # 3 runs (default 1); no names: every scenario once
+```
+
+Every game is Freedoom 1 E1M1, skill 3, at normal page pace (not `fast=1`), `-testdump` on every machine; the test waits until the last machine has 30 s of game time (a late joiner comes after 10 s), snapshots every dump at one moment, and compares each with the host's over the tics both have (`tests/tools/testdump-diff.py --common`). It also checks: every machine logged the same room code and the transport it was given (`relay-ws`, `relay-wt`; a native player `relay-udp`), a late joiner's first record is after tic 100, the game was not idle, no consistency fault, repair, kick, vnet failure or page error in any log, every browser's game exited with status 0, every machine left the room and its longest gap between polls of vnet was under 5 s, no datagram over 1,100 bytes, and (impaired) vnet took the spec on every machine and datagrams were lost, duplicated and reordered. A page is stopped with `window.dlTest.quit()`, which makes the game quit at its next tic (as `-testquit` does), so that it leaves the room and prints vnet's counters.
+
+| Scenario | Machines | Time | What it shows |
+|---|---|---|---|
+| `ws` | browser host, browser joiner | 34 s | WebSocket |
+| `wt` | the same | 34 s | WebTransport (`relay-wt`) |
+| `browser-host-native` | browser host, native joiner | 36 to 41 s | |
+| `native-host` | native host, browser joiner | 34 s | |
+| `hot-join-browser` | browser host and joiner, a second browser joins at about tic 360 | 47 s | |
+| `hot-join-native` | native host alone, a browser joins in progress | 45 s | |
+| `hot-join-into-browser` | browser host alone, a native joins in progress | 46 s | |
+| `impaired`, `impaired-ws` | browser host, browser, native (late), `lat=30,jit=10,loss=3,dup=2,reorder=3` with a seed each, WebTransport or WebSocket | 47 to 49 s | about 150 lost, 80 to 105 duplicated, 135 to 155 reordered datagrams a game |
+| `bots` | browser host with two bots (`-testaddbots 10 2`), a browser joins in progress | 46 to 48 s | |
+| `errors` | the cases of brief 04 section 5 and bad `-relay` values | 90 to 100 s | below |
+| `knobs` | | 18 s | below |
+| `connect-spin` | | 80 s | below |
+
+Three runs of each of the ten game scenarios: 30 games, 453 checks, **21 minutes** (1,260 s), all passed. A game takes 34 to 49 s of which about 8 s is the pages starting. **`errors`** (each case: the page's status line and `window.dlNet` say what failed, are not left on "connecting", and the game is still running at its title screen, its dump growing; the bound is the case's, and the measured time in brackets): the relay not listening (20 s; 6.4 s), no such room (10 s; 0.6 s), the room full (10 s; 0.9 s), the relay killed during a game (`-keepalive 1s`; 15 s; host 0.0 s, joiner 1.7 s), a member dropped by the relay (`-session-timeout 3s`, the page frozen for 6 s; 10 s; 2.1 s after it thaws), the host's page closed (30 s; 15.3 s, "Server Timeout"); `-relay` that is no URL, has no host, a port out of range, no path, a space, 200 characters, or is given to a page that has no relay, and `-server 2` on a page with no relay: the game ends with the message on the overlay, exit status not 0. **`knobs`**: without `?test=1` a page with `relay=`, `relay_wt=`, `relay_cert=`, `impair=` and `args=` in its address starts a single-player game, passes the game none of `DL_RELAY`, `DL_RELAY_WT`, `DL_RELAY_CERT`, `VNET_IMPAIR`, and the relay sees nothing; a page whose `config.js` names a relay passes that one and not the address bar's; with `?test=1` the knobs act (`relay-wt`, vnet reports the impairment), and 8 bad values are refused by the page, 3 more by the game. **`connect-spin`**: a native host is stopped (`SIGSTOP`) after it printed its room code, a browser joins and waits 10 s in `CL_ConnectToServer` (`-testconnectpasses` prints the loop's passes a second every 2 s): 350 to 366 passes a second (before the yield: 450,000 to 550,000); Escape ends the loop (the game leaves the room within 3 s and goes on at the title); then 5 joins in progress of a game with 6 bots, timed from entering the room to the first game tic (`NETPLAY_JOIN_RUNS`): median 0.51 s (0.52 s before the yield).
+
+**Failure proofs of the test's own checks** are switches (`NETPLAY_SABOTAGE=nowt|flip|short|noerrpage`, `NETPLAY_GAPMAX=1000`; the header of `netplay.js`); of the source changes, a build with the change reverted (`WASM_DIR=build/wasm-sab/bin node tests/web/netplay.js ...`, built with `scripts/build-wasm.sh BUILD=build/wasm-sab`). The Outcome of brief 04 lists each run.
+
+Other test-only things added: `-testconnectpasses` (`src/test_dump.c`); `window.dlTest.quit()` and `Module.dlQuitNow` (the page asks the game to quit at its next tic); `?relayraw=1` (the page passes the four knobs on unchecked, to test the game's own checks); `window.dlNet` (the page's network status: `{kind, text}`; kind 0 none, 1 connecting, 2 in a room, 3 ended, with the reason).
