@@ -2012,9 +2012,8 @@ void Got_NetXCmd_NetWait( xcmd_t * xc )
     // Format: XD_NETWAIT
     //  byte:  the value of paused
     // Only the server's: a client's text command can ask for it too, and would pause everybody.
-    // (A demo has the server's commands under player 0.)
     byte value = READBYTE(xc->curpos);
-    if( xc->playernum != SERVER_PID && ! demoplayback )  return;
+    if( xc->playernum != SERVER_PID )  return;
     paused = value;
     if( testdump_active )
         GenPrintf( EMSG_warn, "TEST: pause %d applied at gametic %u (network wait, in the tic stream)\n", paused, (unsigned) gametic );
@@ -6000,6 +5999,7 @@ void TryRunTics (tic_t realtics)
         // start a game after a demo
         maketic+=realtics;
         next_tic_send=maketic;
+        tic_hold=next_tic_send;
         next_tic_clear=next_tic_send;
     }
 

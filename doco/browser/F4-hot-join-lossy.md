@@ -203,3 +203,10 @@ Commits: `6ad704a`, `8863a63`, `608d06c`, `4803432`, `0364797`, `0b39476` and th
 8. Logged only: `bugs.md` L68 (more `P_AddThinker` calls before `.function` is set, at the level start and at run time); L54 is "probably fixed, not proven; watch for it"; the hold's duration is stated correctly in `code-facts.md` §4 and above.
 
 Re-run after the fixes, one at a time, on the final tree: `servertic-sections.sh` 5 of 5; `pause-order.sh` 285 of 285; `test-drone.sh` PASS (16 s); `test-two-joiners.sh` PASS (34 s); lossy hot join 10 of 10 (seeds 401 to 410, 567 s); plain 10 of 10 (563 s), `--bots` 10 of 10 (564 s); relay impaired 5 of 5 (245 s), `--bots` 3 of 3 (155 s), clean 45 s, `--dedicated` 44 s, `test-relay-errors.sh` 142 s: PASS; `savegame-portable.sh` 117 of 117 (576 s); `savegame-old.sh` 12 of 12 (209 s); `savegame-f3.sh` 10 of 10 (210 s); `savegame-malformed.sh` 8 of 8; `demo-hash.sh` 11 of 11 (297 s); `asan-demos.sh` 53 known, 0 new, its hot join PASS (216 s, one `asan-known.txt` line renumbered).
+
+### Fix round 2 (28 Nov 2026, re-review: merge after a one-line fix)
+- `XD_NETWAIT` is ignored unless it comes from the server, in demo playback too: the exception for demos was wrong (in 1.48 demos `AddLmpExtradata` and `ReadLmpExtraData` keep each item's player byte, so server commands keep `SERVER_PID`) and would have run, in playback, a client's `XD_NETWAIT` that the server ignored when the demo was recorded.
+- `tic_hold` is set with `next_tic_send` in `TryRunTics`'s "start a game after a demo" branch, where `SV_Send_Tic_Update` is skipped.
+- **10150 savegames written by the tree from `c58a1c9` to `5303ed1` have no pause byte (added in `608d06c`) and will not load.** 10150 was never merged, so the version number was not raised; `code-facts.md` §8 says so.
+- `test-drone.sh` and `test-two-joiners.sh` no longer print bash's "Killed" job messages.
+- Re-run: @R2@

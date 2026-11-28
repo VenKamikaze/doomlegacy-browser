@@ -33,7 +33,7 @@ done
 bin="$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")"
 if [ -n "$keep" ]; then mkdir -p "$keep"; work="$(cd "$keep" && pwd)"; else work="$(mktemp -d "${TMPDIR:-/tmp}/twojoin.XXXXXX")"; fi
 pids=()
-cleanup() { for p in "${pids[@]}"; do kill -KILL "$p" 2>/dev/null; done; [ -n "$keep" ] || rm -rf "$work"; }
+cleanup() { for p in "${pids[@]}"; do kill -KILL "$p" 2>/dev/null; done; wait 2>/dev/null; [ -n "$keep" ] || rm -rf "$work"; }
 trap cleanup EXIT
 mkdir -p "$work/s" "$work/a" "$work/b"
 export SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
