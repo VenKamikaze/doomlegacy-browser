@@ -41,6 +41,10 @@ void TestImpair_Report( void );
 #include "d_ticcmd.h"
 void TestDump_Walk( ticcmd_t * cmd, int which_player );
 
+// Test-only -testconnectpasses: called once per pass of CL_ConnectToServer and of the repair
+// download loop (bugs.md L60); every 2 s it prints "TEST: connect passes: N in T tics (P a second)".
+void TestDump_ConnectPass( void );
+
 // True if -testdump is active.
 extern int  testdump_active;
 

@@ -22,6 +22,15 @@
 // Changing url, name, size or sha256 makes every browser download the file again on its next
 // visit and forget the copy it had of the old url.
 //
+// Network games (brief 04): the property "relay" of DL_CONFIG, below, next to "data".
+//
+//   relay       The vnet relay, as its WebSocket URL: ws://HOST:PORT/vnet, or wss://HOST/vnet behind TLS
+//               (the page then also tries WebTransport at https://HOST/vnet and falls back to the
+//               WebSocket). '' (the default) offers no network game: the page passes no relay and the
+//               game refuses -relay with a message. A page address cannot change it: only a test page
+//               (?test=1) takes ?relay=, so that a crafted link cannot send visitors to another relay.
+//               doco/browser/data-hosting.md says what the relay needs.
+//
 // ?iwad=<url> in the page address overrides url (name, size and sha256 are then not used: the file
 // must be an IWAD, and is named after what it is).
 (function () {
@@ -47,6 +56,7 @@
 
   window.DL_CONFIG_EXAMPLES = { doom1: doom1, freedoom1: freedoom1 };
   window.DL_CONFIG = {
-    data: doom1
+    data: doom1,
+    relay: ''
   };
 })();

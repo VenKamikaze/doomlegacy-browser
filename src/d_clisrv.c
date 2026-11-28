@@ -169,6 +169,7 @@
 #include "d_items.h"
   // NUMINVENTORYSLOTS, NUMAMMO
 #include "test_dump.h"
+#include "i_web.h"
 
 
 //
@@ -2804,6 +2805,9 @@ static void repair_handler_client( byte nnode )
                 if( Filetx_file_cnt )  // File download in progress.
                     Filetx_Ticker();
             }
+            else
+                I_Web_Idle();   // browser: let the page run between tics instead of spinning (bugs.md L60)
+            TestDump_ConnectPass();
         }
 
         // Have received the savegame from the server.
@@ -3505,6 +3509,9 @@ static void CL_ConnectToServer( void )
             CON_Drawer ();
             I_FinishUpdate ();              // page flip or blit buffer
         }
+        else
+            I_Web_Idle();   // browser: let the page run between tics instead of spinning (bugs.md L60)
+        TestDump_ConnectPass();
     } while ( cl_mode != CLM_connected );
 
     // If this is still set, then did not get a savegame, so turn it off.
@@ -4957,6 +4964,7 @@ static void server_shutdown_handler()
         M_SimpleMessage("Server has Shutdown\n\nPress Esc");
         CL_Reset();
         D_StartTitle();
+        I_Web_NetStatus( NETSTAT_ENDED, "Server has Shutdown: the host ended the game" );
     }
 }
 
@@ -4970,6 +4978,7 @@ static void server_timeout_handler()
         M_SimpleMessage("Server Timeout\n\nPress Esc");
         CL_Reset();
         D_StartTitle();
+        I_Web_NetStatus( NETSTAT_ENDED, "Server Timeout: the host stopped answering" );
     }
 }
 

@@ -78,6 +78,7 @@
 #include "p_saveg.h"
 #include "d_main.h"
 #include "d_clisrv.h"
+#include "i_web.h"
 #include "r_main.h"
 #include "r_draw.h"
 #include "console.h"
@@ -1010,7 +1011,8 @@ void TestDump_Tic( void )
         if( testsave[i].tic == gametic )
             write_savegame( testsave[i].file, testsave[i].game_header );
     }
-    if( testquit_tic && gametic >= testquit_tic )
+    // (the browser build: the page can ask for the same, window.dlTest.quit(), at the tic it likes)
+    if( ( testquit_tic && gametic >= testquit_tic ) || I_Web_TestQuitAsked() )
     {
 #ifdef SG_BOT_STATE
         printf( "TEST: bot aim calls: %u, hash of the aim values %08x\n", bot_aim_calls,
@@ -1022,6 +1024,30 @@ void TestDump_Tic( void )
         fflush( stdout );
 #endif
         I_Quit();
+    }
+}
+
+// -testconnectpasses (brief 04, bugs.md L60): CL_ConnectToServer and the repair download loop call this
+// once a pass; every 2 s it prints how many passes there were.
+void TestDump_ConnectPass( void )
+{
+    static int  on = -1;
+    static unsigned int  passes = 0;
+    static tic_t  since = 0;
+    tic_t  now;
+
+    if( on < 0 )  on = ( M_CheckParm( "-testconnectpasses" ) != 0 );
+    if( ! on )  return;
+    now = I_GetTime();
+    if( ! since )  since = now;
+    passes++;
+    if( now - since >= 70 )
+    {
+        printf( "TEST: connect passes: %u in %u tics (%u a second)\n", passes, (unsigned) (now - since),
+                (unsigned) ( (unsigned long) passes * TICRATE / (now - since) ) );
+        fflush( stdout );
+        passes = 0;
+        since = now;
     }
 }
 

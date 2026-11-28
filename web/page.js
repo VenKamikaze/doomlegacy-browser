@@ -33,13 +33,20 @@
 //   idb=quota        storing the data in IndexedDB fails with a QuotaExceededError
 //   sha=js           hash with the plain JavaScript SHA-256 (what a page without crypto.subtle uses)
 //   stall=MS         stop a download after MS ms without data (default 30000)
+//   relay=URL        (brief 04) the vnet relay's WebSocket URL, ws://HOST:PORT/vnet, in place of config.js's relay. The page passes
+//                    the relay to the game as -relay URL; without ?test=1 the address bar cannot change it
+//   relay_wt=URL     the relay's WebTransport URL (https://HOST:PORT/vnet): tried first; needs relay_cert on a development relay
+//   relay_cert=HEX   the SHA-256 of the relay's -dev-cert certificate (64 hex digits), given to the browser as serverCertificateHashes
+//   impair=SPEC      vnet's impairment spec, e.g. lat=30,jit=10,loss=3,dup=2,reorder=3,seed=7 (VNET_IMPAIR: a browser has no environment)
+//                    a malformed or over-long value of these four is refused with a message and the game does not start
+//   window.dlNet     what the page shows about the network game: {kind, text}; kind 0 none, 1 connecting, 2 in a room, 3 ended
 //   window.dlData    what the loader produced (source, from, name, game, size, sha256, cached, notes, hashMs, ...)
 //   window.dlStarts  how many times the page called callMain
 //   window.dlProgress  each progress report of the download: [bytes so far, total or 0 when unknown]
 //   window.dlPersistent  the answer of navigator.storage.persist(), once the data was stored
 //   Module.dlYields  each yield: [the game gave control away, the page resumed it, the game was running again]
 //   window.dlMouse   mouse movements seen on the page (all, while locked, their sum)
-//   window.dlTest    FS, readFile, writeFile, listFiles, syncNow; window.dlOut and dlErr (the game's
+//   window.dlTest    FS, readFile, writeFile, listFiles, syncNow, quit() (the game quits at its next tic, as -testquit does); window.dlOut and dlErr (the game's
 //                    output), window.dlExit ({code}), window.dlState, Module.dlFrameLog (when the game
 //                    presented a frame, performance.now())
 (function () {
@@ -52,6 +59,32 @@
   var WORK_DIR = '/work';
   var CLOSE_DELAY_MS = 10;
   var NOLOCK = TEST && params.get('nolock') === '1';
+
+  // ---- The relay (brief 04) ---------------------------------------------------------------------------
+  // The relay is config.js's (DL_CONFIG.relay); a test page (?test=1) can take another from the address bar, with
+  // the knobs for a development relay. Nothing in the address bar has any effect without ?test=1.
+  var RELAY_RE = /^wss?:\/\/(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(:[0-9]{1,5})?\/[\x21-\x7e]*$/i;
+  var NET = { relay: '', relayWt: '', relayCert: '', impair: '', error: '', note: '' };
+  (function () {
+    var cfg = window.DL_CONFIG && window.DL_CONFIG.relay;
+    if (cfg) {
+      if (typeof cfg === 'string' && cfg.length <= 150 && RELAY_RE.test(cfg)) { NET.relay = cfg; }
+      else { NET.note = 'config.js: relay is not a ws:// or wss:// URL (ws://HOST:PORT/vnet): no network game is offered.'; }
+    }
+    if (!(params.get('test') === '1')) { return; }
+    function knob(name, max, re, what) {
+      var v = params.get(name);
+      if (v === null || v === '') { return ''; }
+      if (v.length > max) { NET.error = NET.error || (name + '= is ' + v.length + ' characters long (at most ' + max + '): ' + what); return ''; }
+      if (!re.test(v)) { NET.error = NET.error || (name + '= is not valid: ' + what); return ''; }
+      return v;
+    }
+    var r = knob('relay', 150, RELAY_RE, 'give the relay as ws://HOST:PORT/vnet or wss://HOST/vnet');
+    if (r) { NET.relay = r; }
+    NET.relayWt = knob('relay_wt', 190, /^https:\/\/[\x21-\x7e]+$/i, 'give the WebTransport address as https://HOST:PORT/vnet');
+    NET.relayCert = knob('relay_cert', 64, /^[0-9a-f]{64}$/i, 'give the certificate hash as 64 hex digits');
+    NET.impair = knob('impair', 120, /^[a-z]+=[0-9.]+(,[a-z]+=[0-9.]+)*$/, 'for example lat=30,jit=10,loss=3,dup=2,reorder=3,seed=7');
+  })();
 
   var canvas = document.getElementById('canvas');
   var overlay = document.getElementById('overlay');
@@ -68,6 +101,7 @@
   var redownloadBtn = document.getElementById('redownload');
   var useDownloadBtn = document.getElementById('usedownload');
   var testInfoEl = document.getElementById('testinfo');
+  var netBar = document.getElementById('netbar');
 
   var FS = null;
   var running = false;
@@ -140,6 +174,12 @@
     preRun: [function (m) {
       // the environment is read when the runtime starts
       if (TEST && params.get('audio') === 'dummy') { m.ENV.SDL_AUDIODRIVER = 'dummy'; }
+      // The game finds the relay and the test knobs in its environment (src/i_vnet.c): DL_RELAY says the page offers a
+      // network game, the others are only ever set on a test page.
+      if (NET.relay) { m.ENV.DL_RELAY = NET.relay; }
+      if (NET.relayWt) { m.ENV.DL_RELAY_WT = NET.relayWt; }
+      if (NET.relayCert) { m.ENV.DL_RELAY_CERT = NET.relayCert; }
+      if (NET.impair) { m.ENV.VNET_IMPAIR = NET.impair; }
     }],
     onRuntimeInitialized: function () { prepare().catch(function (e) { finish('Could not start: ' + describe(e), true); }); },
     // exit() was called somewhere in the game (I_Quit, I_Error), or main returned.
@@ -159,6 +199,15 @@
     }
   };
   window.Module = Module;
+  // What the game says about the network game (src/sdl/i_web.c, I_Web_NetStatus): shown under the picture and kept in
+  // window.dlNet. 3 is a network game that ended (the relay failed, the host went): it stays until the next one.
+  window.dlNet = { kind: 0, text: '' };
+  Module.dlNetStatus = function (kind, text) {
+    window.dlNet = { kind: kind, text: text };
+    netBar.textContent = text;
+    netBar.className = kind === 3 ? 'ended' : '';
+    netBar.hidden = !(kind > 0 && text);
+  };
   if (TEST) {
     if (params.get('fast') === '1') {
       Module.dlFast = 1;
@@ -436,6 +485,7 @@
   useDownloadBtn.addEventListener('click', function () { loadData({ useDownload: true }); });
 
   function prepare() {
+    if (NET.error) { finish('The address of this test page is not valid: ' + NET.error, true); return Promise.resolve(); }
     FS = Module.FS;
     FS.mkdir(WORK_DIR);
     var ready = Promise.resolve();
@@ -452,6 +502,7 @@
     } else if (!exists(HOME_DIR)) {
       FS.mkdir(HOME_DIR);
     }
+    if (NET.note) { storageNote = [storageNote, NET.note].filter(Boolean).join('\n'); }
     return ready.then(function () {
       FS.chdir(WORK_DIR);   // writable: the join's $$$.sav goes to the working directory
       // legacy.wad is part of the build, not game data: served next to the page and left to the HTTP cache (data-hosting.md).
@@ -490,6 +541,7 @@
     // A 640x480 window: the game's default is "fullscreen", which SDL turns into a canvas the size of the
     // browser window, and that is a different (and large) picture for every window.
     var a = ['-home', HOME_DIR, '-iwad', WORK_DIR + '/' + dataName, '-nomusic', '-noendtext'];
+    if (NET.relay) { a.push('-relay', NET.relay); }
     if (!(TEST && params.get('video') === 'native')) { a.push('-window', '-width', '640', '-height', '480'); }
     if (!TEST) { return a; }
     var extra = params.get('args') || '';
@@ -676,7 +728,8 @@
       },
       writeFile: function (name, bytes) { FS.writeFile(name.charAt(0) === '/' ? name : WORK_DIR + '/' + name, bytes); },
       listFiles: function (dir) { return FS.readdir(dir || WORK_DIR).filter(function (n) { return n !== '.' && n !== '..'; }); },
-      syncNow: syncNow
+      syncNow: syncNow,
+      quit: function () { Module.dlQuitNow = true; }
     };
   }
 

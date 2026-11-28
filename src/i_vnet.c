@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "doomincl.h"
 #include "i_vnet.h"
@@ -38,6 +39,7 @@
 #include "m_argv.h"
 #include "command.h"
 #include "doomstat.h"
+#include "i_web.h"
 
 #ifndef USE_VNET
 
@@ -213,6 +215,108 @@ static void copy_upper(char * dst, size_t size, const char * src)
 }
 
 
+#ifdef __EMSCRIPTEN__
+// The browser's -relay: "ws://" or "wss://" (any case), a host (letters, digits, '.', '-', or a [v6] literal),
+// an optional ":PORT" (1 to 65535) and a path that starts with '/'; no spaces or control characters; and
+// short enough for relay_name.  The message says what is wrong.
+static boolean valid_relay_url(const char * url, char * err, size_t err_size)
+{
+    const char * p = url;
+    const char * host;
+    size_t n, hostlen;
+    const char * syntax = "the relay's WebSocket URL, ws://HOST:PORT/vnet or wss://HOST/vnet";
+    char why[160];
+
+    why[0] = '\0';
+    n = strlen(url);
+    if( n >= sizeof(relay_name) )
+        snprintf(why, sizeof(why), "it is %u characters long (at most %u)", (unsigned) n, (unsigned) sizeof(relay_name) - 1);
+    else
+    {
+        size_t i;
+        for( i=0; i<n; i++ )
+            if( (unsigned char) url[i] <= ' ' || (unsigned char) url[i] >= 127 )
+            {
+                snprintf(why, sizeof(why), "it has a space or a control character");
+                break;
+            }
+    }
+    if( ! why[0] )
+    {
+        if( strncasecmp(p, "ws://", 5) == 0 )  p += 5;
+        else if( strncasecmp(p, "wss://", 6) == 0 )  p += 6;
+        else snprintf(why, sizeof(why), "it does not start with ws:// or wss://");
+    }
+    if( ! why[0] )
+    {
+        host = p;
+        while( *p && *p != '/' && *p != ':' && *p != '[' )  p++;
+        if( *host == '[' )
+        {
+            const char * close = strchr(host, ']');
+            if( ! close )  snprintf(why, sizeof(why), "an address in [ ] is not closed");
+            else  p = close + 1;
+        }
+        hostlen = (size_t) (p - host);
+        if( ! why[0] && hostlen == 0 )  snprintf(why, sizeof(why), "it has no host name");
+        if( ! why[0] && *p == ':' )
+        {
+            long port = 0;
+            const char * q = ++p;
+            while( *q >= '0' && *q <= '9' && port < 100000 )  port = port * 10 + (*q++ - '0');
+            if( q == p || port < 1 || port > 65535 || (*q && *q != '/') )
+                snprintf(why, sizeof(why), "the port is not a number from 1 to 65535");
+            p = q;
+        }
+        if( ! why[0] && *p != '/' )
+            snprintf(why, sizeof(why), "it has no path (the relay's is /vnet)");
+    }
+    if( why[0] )
+    {
+        if( err && err_size )
+            snprintf(err, err_size, "-relay %.100s: %s; the browser takes %s", url, why, syntax);
+        return false;
+    }
+    return true;
+}
+
+// The test-only knobs (the page sets them in the environment only on a ?test=1 page): the WebTransport
+// address, the SHA-256 of the relay's development certificate, and VNET_IMPAIR.  A bad value is refused
+// with a message, never cut.
+static void check_page_knobs(void)
+{
+    const char * wt = getenv("DL_RELAY_WT");
+    const char * cert = getenv("DL_RELAY_CERT");
+    const char * imp = getenv("VNET_IMPAIR");
+    vnet_impair parsed;
+    size_t i;
+
+    if( wt && wt[0] )
+    {
+        if( strlen(wt) > 190 || strncasecmp(wt, "https://", 8) != 0 || wt[8] == '\0' )
+            vn_fatal_arg("the WebTransport address must be https://HOST:PORT/vnet (at most 190 characters)");
+        for( i=0; wt[i]; i++ )
+            if( (unsigned char) wt[i] <= ' ' || (unsigned char) wt[i] >= 127 )
+                vn_fatal_arg("the WebTransport address has a space or a control character");
+    }
+    if( cert && cert[0] )
+    {
+        if( strlen(cert) != 64 )
+            vn_fatal_arg("the relay certificate hash must be 64 hex digits, it is %u characters", (unsigned) strlen(cert));
+        for( i=0; i<64; i++ )
+            if( ! ( (cert[i] >= '0' && cert[i] <= '9') || (cert[i] >= 'a' && cert[i] <= 'f') || (cert[i] >= 'A' && cert[i] <= 'F') ) )
+                vn_fatal_arg("the relay certificate hash must be 64 hex digits");
+    }
+    if( imp && imp[0] )
+    {
+        if( strlen(imp) > 120 )
+            vn_fatal_arg("the impairment spec is %u characters long (at most 120)", (unsigned) strlen(imp));
+        if( vnet_impair_parse(imp, &parsed) != 0 )
+            vn_fatal_arg("the impairment spec \"%s\" is not valid (for example lat=30,jit=10,loss=3,dup=2,reorder=3,seed=7)", imp);
+    }
+}
+#endif
+
 // ---------------------------------------------------------------------------
 // Selecting the driver.
 
@@ -227,6 +331,33 @@ boolean I_VNet_Configure(const char * relay, const char * room, char * err, size
     int rc;
     char tmp[96];
 
+#ifdef __EMSCRIPTEN__
+    // The browser: the relay is its WebSocket URL, ws://HOST[:PORT]/PATH or wss://HOST[:PORT]/PATH.  There is no
+    // resolver; vnet derives the WebTransport address of a wss:// URL by itself.
+    if( ! relay || ! relay[0] )
+    {
+        if( err && err_size )  snprintf(err, err_size, "-relay needs the relay's WebSocket URL (ws://HOST:PORT/vnet or wss://HOST/vnet)");
+        return false;
+    }
+    if( ! valid_relay_url(relay, err, err_size) )
+        return false;
+    if( room && room[0] && ! valid_room_code(room) )
+    {
+        if( err && err_size )
+            snprintf(err, err_size, "'%s' is not a room code (six letters and digits, such as ABC234)", room);
+        return false;
+    }
+    (void) a; (void) rc; (void) tmp;
+    if( relay != relay_name )
+        snprintf(relay_name, sizeof(relay_name), "%s", relay);
+    snprintf(relay_numeric, sizeof(relay_numeric), "%s", relay);
+    room_request[0] = '\0';
+    if( room && room[0] )
+        copy_upper(room_request, sizeof(room_request), room);
+    selected = true;
+    if( state == IVN_OFF )  state = IVN_IDLE;
+    return true;
+#else
     if( ! relay || ! relay[0] )
     {
         if( err && err_size )  snprintf(err, err_size, "-relay needs HOST:PORT (the relay's UDP address)");
@@ -270,6 +401,7 @@ boolean I_VNet_Configure(const char * relay, const char * room, char * err, size
     selected = true;
     if( state == IVN_OFF )  state = IVN_IDLE;
     return true;
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -325,6 +457,35 @@ static void vn_discard_context(void)
     sock = -1;
 }
 
+// How long the game goes without calling the driver (what the relay's keepalive and silence limits need to
+// be compared with): the longest gap between two polls and how many were over 100 ms, 1 s and 5 s.
+static uint64_t  last_poll_ms = 0;
+static unsigned  max_gap_ms = 0;
+static int       max_gap_from = -1, max_gap_to = -1;
+static unsigned  gaps_100 = 0, gaps_1000 = 0, gaps_5000 = 0;
+static int       last_poll_gamestate = -1;
+
+static void note_poll_gap(void)
+{
+    uint64_t now = vnet_time(ctx);
+
+    if( last_poll_ms && now >= last_poll_ms )
+    {
+        unsigned gap = (unsigned) (now - last_poll_ms);
+        if( gap >= 100 )   gaps_100++;
+        if( gap >= 1000 )  gaps_1000++;
+        if( gap >= 5000 )  gaps_5000++;
+        if( gap > max_gap_ms )
+        {
+            max_gap_ms = gap;
+            max_gap_from = last_poll_gamestate;
+            max_gap_to = (int) gamestate;
+        }
+    }
+    last_poll_ms = now;
+    last_poll_gamestate = (int) gamestate;
+}
+
 static void vn_print_stats(void)
 {
     vnet_stats s;
@@ -337,7 +498,11 @@ static void vn_print_stats(void)
            (unsigned long long) s.impair_duplicated, (unsigned long long) s.impair_reordered,
            (unsigned long long) s.tx_dropped, (unsigned long long) s.rx_datagrams,
            max_send_len, (int) max_send_type);
+    printf("vnet: polls: longest gap %u ms (game state %d to %d); %u gaps of 100 ms or more, %u of 1 s, %u of 5 s\n",
+           max_gap_ms, max_gap_from, max_gap_to, gaps_100, gaps_1000, gaps_5000);
     fflush(stdout);
+    last_poll_ms = 0;  max_gap_ms = 0;  max_gap_from = max_gap_to = -1;
+    gaps_100 = gaps_1000 = gaps_5000 = 0;
 }
 
 // I_NetCloseSocket
@@ -355,7 +520,10 @@ static void vn_close(void)
     max_members = 0;
     relay_rtt = -1;
     if( state != IVN_FAILED )
+    {
         state = selected? IVN_IDLE : IVN_OFF;
+        I_Web_NetStatus(NETSTAT_NONE, "");
+    }
 }
 
 static void vn_shutdown(void)
@@ -422,18 +590,24 @@ static void vn_failed(int code, const char * text, boolean host_silent)
     snprintf(error_text, sizeof(error_text), "%s%s", text, hint);
     pending_count = 0;
 
-    if( host_silent )
-        vn_say("vnet: cannot join room %s: %s", room_code, error_text);
-    else
-    if( ! was_ready )
     {
-        if( joining )
-            vn_say("vnet: cannot join room %s on relay %s: %s", room_request, relay_name, error_text);
+        char msg[400];
+        if( host_silent )
+            snprintf(msg, sizeof(msg), "vnet: cannot join room %s: %s", room_code, error_text);
         else
-            vn_say("vnet: cannot create a room on relay %s: %s", relay_name, error_text);
+        if( ! was_ready )
+        {
+            if( joining )
+                snprintf(msg, sizeof(msg), "vnet: cannot join room %s on relay %s: %s", room_request, relay_name, error_text);
+            else
+                snprintf(msg, sizeof(msg), "vnet: cannot create a room on relay %s: %s", relay_name, error_text);
+        }
+        else
+            snprintf(msg, sizeof(msg), "vnet: the relay session ended: %s (relay %s, room %s)", error_text, relay_name, room_code);
+        vn_say("%s", msg);
+        // The page shows it (a failure ends the network game and the game goes on at the title screen)
+        I_Web_NetStatus(NETSTAT_ENDED, msg + 6);   // without "vnet: "
     }
-    else
-        vn_say("vnet: the relay session ended: %s (relay %s, room %s)", error_text, relay_name, room_code);
 
     if( opening )
         end_pending = true;   // not inside the caller's start-up: at the next call
@@ -465,6 +639,14 @@ static void vn_became_ready(const vnet_status_info * st)
         vn_say("vnet: joined room %s (you are %s; the room takes %d players)", room_code, self_text, max_members);
     else
         vn_say("vnet: room code %s (you are %s; the room takes %d players)", room_code, self_text, max_members);
+    // Which transport vnet chose (relay-udp natively; relay-wt or relay-ws in the browser): the tests read it.
+    vn_say("vnet: transport %s", transport);
+    {
+        char note[160];
+        snprintf(note, sizeof(note), "%s room %s (%s)", joining? "In" : "Hosting", room_code,
+                 strcmp(transport, "relay-wt") == 0? "WebTransport" : strcmp(transport, "relay-ws") == 0? "WebSocket" : transport);
+        I_Web_NetStatus(NETSTAT_READY, note);
+    }
 
     // What the game sent while the room was being entered, in order.
     for( i=0; i<pending_count; i++ )
@@ -486,6 +668,7 @@ void I_VNet_Poll(void)
     }
     if( ! ctx || ending )  return;
 
+    note_poll_gap();
     vnet_poll(ctx);
     s = vnet_status(ctx, &st);
     relay_rtt = st.relay_rtt_ms;
@@ -739,7 +922,19 @@ static boolean open_socket(void)
 
     vnet_config_init(&cfg);
     cfg.backend = VNET_BACKEND_RELAY_AUTO;
+#ifdef __EMSCRIPTEN__
+    // The page's relay is the WebSocket URL; WebTransport is derived from a wss:// one.  On a test page
+    // the environment can name the WebTransport address and the certificate hash of a development relay.
+    cfg.relay = relay_numeric;
+    {
+        const char * wt = getenv("DL_RELAY_WT");
+        const char * cert = getenv("DL_RELAY_CERT");
+        if( wt && wt[0] )  cfg.relay_wt = wt;
+        if( cert && cert[0] )  cfg.relay_cert_sha256 = cert;
+    }
+#else
     cfg.relay_udp = relay_numeric;
+#endif
     cfg.room = joining? room_request : NULL;
     cfg.rx_queue_len = 512;       // a long frame (a level load) must not drop datagrams
     cfg.log = vn_log;
@@ -767,6 +962,7 @@ static boolean open_socket(void)
     my_port = port;
 
     state = IVN_CONNECTING;
+    I_Web_NetStatus(NETSTAT_CONNECTING, joining? "Joining a room on the relay..." : "Creating a room on the relay...");
     was_ready = false;
     host_heard = false;
     reported_oversize = false;
@@ -830,8 +1026,21 @@ void I_Init_VNet_Network(void)
 
     if( M_CheckParm("-relay") )
     {
+#ifdef __EMSCRIPTEN__
+        // Only a page that has a relay (config.js, or ?relay= on a test page) offers a network game: the page
+        // says so with DL_RELAY and passes the relay itself.
+        {
+            const char * offered = getenv("DL_RELAY");
+            if( ! offered || ! offered[0] )
+                vn_fatal_arg("-relay: this page has no relay configured (the \"relay\" entry of config.js), so it offers no network game");
+        }
+        check_page_knobs();
+        if( ! M_IsNextParm() )
+            vn_fatal_arg("-relay needs the relay's WebSocket URL (ws://HOST:PORT/vnet or wss://HOST/vnet)");
+#else
         if( ! M_IsNextParm() )
             vn_fatal_arg("-relay needs HOST:PORT (the relay's UDP address)");
+#endif
         relay = M_GetNextParm();
         if( ! I_VNet_Configure(relay, code, err, sizeof(err)) )
             vn_fatal_arg("%s", err);

@@ -40,7 +40,7 @@ SRC_MAIN := screen v_video r_draw r_plane r_segs r_sky r_things r_splats \
   mserv b_game b_look b_node b_search g_input g_game f_finale f_wipe wi_stuff \
   am_map md5 m_menu m_misc m_argv m_bbox m_fixed m_swap m_cheat m_random \
   console command p_saveg tables info infoext dstrings dehacked w_wad w_zip \
-  d_netcmd d_clisrv d_net d_netfil i_tcp i_vnet d_items d_main test_dump
+  d_netcmd d_clisrv d_net d_netfil i_tcp d_items d_main test_dump
 SRC_SDL  := i_system i_video i_sound i_net filesrch endtxt i_main i_nohwr i_web
 SRC_UMI  := doom_umi_api doom_umi_parser doom_umi_lexer doom_umi_keywords
 
@@ -48,6 +48,22 @@ SOURCES := $(addprefix src/,$(addsuffix .c,$(SRC_MAIN))) \
            $(addprefix src/sdl/,$(addsuffix .c,$(SRC_SDL))) \
            $(addprefix src/umapinfo/,$(addsuffix .c,$(SRC_UMI)))
 OBJS    := $(patsubst src/%.c,$(BUILD)/objs/%.o,$(SOURCES))
+
+# vnet (ext/vnet, a submodule; brief 04): all of its src/*.c with its own flags (C11, POSIX 2008; the ones
+# that are for UDP, relay_udp.c and udp.c, compile to stubs under Emscripten), and the driver, i_vnet.c, with
+# USE_VNET; linked with -lwebsocket.js (the WebSocket glue of the relay client). Without ext/vnet checked out
+# i_vnet.c is built as stubs that refuse -relay, as the native build does.
+VNETDIR := ext/vnet
+ifneq ($(wildcard $(VNETDIR)/include/vnet.h),)
+VNET     := yes
+VNET_SRC := $(wildcard $(VNETDIR)/src/*.c)
+VNET_OBJS := $(patsubst $(VNETDIR)/src/%.c,$(BUILD)/objs/vnet-%.o,$(VNET_SRC))
+VNET_DEFS := -DUSE_VNET -I$(VNETDIR)/include
+VNET_LD  := -lwebsocket.js
+else
+VNET     := no
+endif
+OBJS    += $(BUILD)/objs/i_vnet.o $(VNET_OBJS)
 
 SDLFLAGS := -sUSE_SDL=2 -sUSE_SDL_MIXER=2
 # s_sound.c defines a global detect_music_type, which the static SDL2_mixer
@@ -66,17 +82,19 @@ CFLAGS   := -Wall $(OPTLEV) -ffp-contract=off -fno-strict-aliasing $(DEFS) $(SDL
 LDFLAGS  := $(OPTLEV) $(SDLFLAGS) -sSTACK_SIZE=2097152 -sINITIAL_MEMORY=134217728 \
   -sALLOW_MEMORY_GROWTH=1 -sEXIT_RUNTIME=1 -sFORCE_FILESYSTEM=1 \
   -sMODULARIZE=1 -sEXPORT_NAME=createDoomLegacy -sINVOKE_RUN=0 \
-  -sEXPORTED_RUNTIME_METHODS=FS,ENV,callMain,IDBFS -lidbfs.js $(ASYNCFLAGS) $(EXTRA_LDFLAGS)
+  -sEXPORTED_RUNTIME_METHODS=FS,ENV,callMain,IDBFS -lidbfs.js $(VNET_LD) $(ASYNCFLAGS) $(EXTRA_LDFLAGS)
 
 .DEFAULT_GOAL := all
 
-# Changing NOASYNC or EXTRA_LDFLAGS must rebuild what depends on them: a stamp that changes with them.
+# Changing NOASYNC, EXTRA_LDFLAGS or whether vnet is there must rebuild what depends on them: a stamp that
+# changes with them.
 FLAGS_STAMP := $(BUILD)/flags.stamp
+STAMP_TEXT := NOASYNC=$(NOASYNC) EXTRA_LDFLAGS=$(EXTRA_LDFLAGS) VNET=$(VNET)
 $(FLAGS_STAMP): FORCE
 	@mkdir -p $(dir $@)
-	@printf '%s\n' 'NOASYNC=$(NOASYNC) EXTRA_LDFLAGS=$(EXTRA_LDFLAGS)' | cmp -s - $@ || printf '%s\n' 'NOASYNC=$(NOASYNC) EXTRA_LDFLAGS=$(EXTRA_LDFLAGS)' > $@
+	@printf '%s\n' '$(STAMP_TEXT)' | cmp -s - $@ || printf '%s\n' '$(STAMP_TEXT)' > $@
 FORCE:
-$(BUILD)/objs/sdl/i_web.o: $(FLAGS_STAMP)
+$(BUILD)/objs/sdl/i_web.o $(BUILD)/objs/i_vnet.o: $(FLAGS_STAMP)
 
 TARGET := $(BUILD)/bin/doomlegacy.js
 PAGE   := index.html page.js page.css config.js iwads.js data.js
@@ -99,6 +117,15 @@ $(TARGET): $(OBJS) scripts/wasm.mk $(FLAGS_STAMP)
 $(BUILD)/objs/%.o: src/%.c scripts/wasm.mk
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# vnet: its own flags. The driver: the game's flags, USE_VNET and vnet's include path.
+$(BUILD)/objs/vnet-%.o: $(VNETDIR)/src/%.c scripts/wasm.mk
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -Wall -Wextra -std=c11 -D_POSIX_C_SOURCE=200809L -I$(VNETDIR)/include -I$(VNETDIR)/src -MMD -MP -c $< -o $@
+
+$(BUILD)/objs/i_vnet.o: src/i_vnet.c scripts/wasm.mk
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(VNET_DEFS) -c $< -o $@
 
 clean:
 	rm -rf $(BUILD)

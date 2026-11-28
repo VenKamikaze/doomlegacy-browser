@@ -55,6 +55,24 @@ void dl_mouse_motion( int dx, int dy )
     D_PostEvent( &event );
 }
 
+// What the network game is doing, for the page (brief 04): Module.dlNetStatus(kind, text) shows it.
+EM_JS_DEPS(dl_net_deps, "$UTF8ToString")
+EM_JS(void, dl_net_status, (int kind, const char * text), { if (Module.dlNetStatus) { Module.dlNetStatus(kind, UTF8ToString(text)); } });
+
+void I_Web_NetStatus( int kind, const char * text )
+{
+    dl_net_status( kind, text ? text : "" );
+}
+
+// Test hook: the page asks the game to end now (Module.dlQuitNow, set by window.dlTest.quit()). The game
+// quits from its own tic, as -testquit does, so it leaves the room and prints what vnet counted.
+EM_JS(int, dl_quit_asked, (void), { return Module.dlQuitNow ? 1 : 0; });
+
+int I_Web_TestQuitAsked( void )
+{
+    return dl_quit_asked();
+}
+
 #ifdef DL_NO_ASYNCIFY
 // A build for measuring the size of ASYNCIFY only (scripts/wasm.mk NOASYNC=1): no
 // yields, so it cannot run in a page.
