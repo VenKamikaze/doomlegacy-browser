@@ -6,7 +6,8 @@
 #   scripts/serve-wasm.sh [PORT]
 #
 # Needs scripts/build-wasm.sh and scripts/fetch-test-data.sh first (Node.js only for this server).
-# The page loads testdata/freedoom1.wad; ?iwad=URL picks another IWAD.
+# The page loads testdata/doom1.wad (the shareware IWAD, next to the page: web/config.js); ?iwad=URL picks
+# another IWAD, for example ?iwad=freedoom1.wad.
 set -euo pipefail
 case "${1:-}" in -h|--help) sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d;s/^# \{0,1\}//'; exit 0 ;; esac
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -67,7 +67,7 @@ async function main() {
   try {
     // --- 1. The blank check must be able to fail ---------------------------------------------------------
     {
-      const { page, context } = await t.open(env, '?test=1&persist=0&audio=dummy');
+      const { page, context } = await t.open(env, '?test=1&persist=0&audio=dummy&iwad=/freedoom1.wad');
       await t.waitState(page, 'ready');
       await page.evaluate(() => { document.getElementById('overlay').hidden = true; });   // the overlay is not the canvas
       const before = await t.canvasStats(page);
@@ -90,7 +90,7 @@ async function main() {
     }
 
     // --- 2. The game: title, menu, keys, frames, sound ---------------------------------------------------
-    const o = await t.open(env, '?test=1&persist=0' + (SAB === 'lateaudio' ? '&noprime=1' : ''));      // the real audio device: no audio=dummy
+    const o = await t.open(env, '?test=1&persist=0&iwad=/freedoom1.wad' + (SAB === 'lateaudio' ? '&noprime=1' : ''));      // the real audio device: no audio=dummy
     const { page, context, errors, consoleErrors } = o;
     // Sound that reaches the audio output: SDL feeds a ScriptProcessorNode; watch the loudest sample it writes.
     await page.addInitScript((silence) => {
@@ -214,7 +214,7 @@ async function main() {
     // back (the user pressed Escape: the key itself never reaches the page) the game must still get an Escape and open
     // its menu. A release the game asks for itself must not.
     {
-      const e = await t.open(env, '?test=1&persist=0&audio=dummy&args=' + encodeURIComponent('-warp 1 1 -skill 1'));
+      const e = await t.open(env, '?test=1&persist=0&audio=dummy&iwad=/freedoom1.wad&args=' + encodeURIComponent('-warp 1 1 -skill 1'));
       await t.waitState(e.page, 'ready');
       await e.page.click('#start');
       await e.page.waitForTimeout(6000);

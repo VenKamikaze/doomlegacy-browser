@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
 # Build the Emscripten (WebAssembly) version into build/wasm/bin: doomlegacy.{js,wasm}, the page
-# (web/index.html, page.js, page.css) and legacy.wad. scripts/serve-wasm.sh serves it.
+# (web/index.html, page.js, page.css, config.js, iwads.js, data.js) and legacy.wad. scripts/serve-wasm.sh serves it.
 #
 #   scripts/build-wasm.sh              # incremental build, 4 jobs
 #   scripts/build-wasm.sh -j2          # other make options are passed through

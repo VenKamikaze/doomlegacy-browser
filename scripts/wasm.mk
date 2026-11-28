@@ -79,7 +79,7 @@ FORCE:
 $(BUILD)/objs/sdl/i_web.o: $(FLAGS_STAMP)
 
 TARGET := $(BUILD)/bin/doomlegacy.js
-PAGE   := index.html page.js page.css
+PAGE   := index.html page.js page.css config.js iwads.js data.js
 SITE   := $(addprefix $(BUILD)/bin/,$(PAGE) legacy.wad)
 
 all: $(TARGET) $(SITE)

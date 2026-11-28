@@ -55,9 +55,9 @@ body {
 #overlay[hidden] { display: none; }
 #overlay h1 { margin: 0 0 4px; font-size: 1.6rem; }
 #status { margin: 0; max-width: 40em; white-space: pre-line; }
-#status.error { color: var(--bad); }
+#status.error { color: #ff7a70; }      /* the overlay is dark in both themes */
 #progress { width: min(320px, 70%); }
-button {
+button, .button {
   font: inherit;
   padding: 10px 22px;
   border: 0;
@@ -65,7 +65,15 @@ button {
   background: var(--accent);
   color: var(--accent-ink);
   cursor: pointer;
+  display: inline-block;
+  position: relative;
 }
+button.secondary, .button.secondary { background: transparent; color: #e8e4dc; border: 1px solid #8a8478; padding: 8px 16px; font-size: 0.9rem; }
+.button input[type=file] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.button:focus-within { outline: 3px solid var(--fg); outline-offset: 2px; }
+#datactl { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 6px; }
+#datainfo, #notes { margin: 0; max-width: 42em; font-size: 0.85rem; color: #c8c2b6; white-space: pre-line; }
+#notes { color: #ffd37a; }
 button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
 [hidden] { display: none !important; }
 #help, #testinfo { margin: 8px 16px 0; color: var(--muted); font-size: 0.85rem; text-align: center; }
