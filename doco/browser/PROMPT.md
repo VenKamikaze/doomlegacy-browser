@@ -41,7 +41,7 @@ You work **one chunk at a time**. For each chunk you write a brief, have it impl
   - test data is Freedoom and `DOOM1.WAD`;
   - the git model is `claudeai`, `browser/NN-*` and `fix/*`.
 - **Not checked yet:** whether upstream SVN has fixed L1, L13, L15, L21 or L22, and whether its maintainer accepts patches. SourceForge can't be read from the cloud container; the user can check (F1's Outcome has the command).
-- **Next:** 04 (browser netplay; includes L29, L59, L60, L63, L64), on the user's go-ahead. F4 is done (28 Nov 2026). Briefs 02 and 03 are done (27 and 28 Nov 2026); their play-test steps are in their Outcomes. 03's default data is the shareware `DOOM1.WAD` (D14).
+- **Next:** 04 (`04-browser-netplay.md`: browser netplay with visible tabs, L60), started 28 Nov 2026; then 04b (hidden and slow tabs: L59, L29, L63, L64). F4 is done (28 Nov 2026). Briefs 02 and 03 are done (27 and 28 Nov 2026); their play-test steps are in their Outcomes. 03's default data is the shareware `DOOM1.WAD` (D14).
 
 ## 1. Read first, in this order
 
@@ -78,6 +78,7 @@ You work **one chunk at a time**. For each chunk you write a brief, have it impl
 | 03 | **Data download** | The page fetches the IWAD (D7), caches it in IndexedDB and puts it on the WAD search path, with a file picker for people's own copies. Freedoom and `DOOM1.WAD` must be served from the page's own origin or a host that allows CORS. Ask the user which data the public page offers. |
 | M1 | **OPL music** | Q5 in the README: Chocolate Doom's GPL OPL player and the Nuked OPL3 emulator (LGPL), driven by the IWAD's `GENMIDI` bank, natively and in the browser. The README lists the questions to answer. Audio starts only after a user gesture. |
 | 04 | **Browser netplay** | vnet's relay backends in the browser (WebTransport, then WebSocket). A browser host and browser and native joiners. The hidden-tab and pacing problems that jfSW hit (a hidden host tab slows everyone), and hot join from the browser. |
+| 04b | **Hidden and slow tabs** (`bugs.md` L59, L29, L63, L64) | Split from 04 by the coordinator (28 Nov 2026) to keep each cycle small, as jfSW needed 04, 04b and 04c here. A hidden tab in a network game keeps the room near full speed (vnet's wake, a hidden pass that does not wait on throttled timers); a frozen tab; a joiner that is slow or far behind; the server's wait for a joiner's download (L64). After 04. |
 | 05 | **Host and join from the game** | Room codes, an invite link (`?join=CODE`), an HTML lobby overlay, and the console and menu entries that lead to it. |
 | 06 | **Deployment guide** | Arch, Apache with TLS, the relay under systemd, and native players. Follow jfsw-browser's `deploy.md`. |
 

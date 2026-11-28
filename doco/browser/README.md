@@ -24,6 +24,8 @@ The goal is Doom Legacy playable in a browser (Emscripten/WASM), **with its musi
 | 02 | [The Emscripten port](02-emscripten-port.md): ASYNCIFY yields in the blocking loops, a page with click to start, keyboard, mouse, sound effects, IDBFS for config and saves | done, 27 Nov 2026 (play-test pending: steps in its Outcome) |
 | 03 | [Data download](03-data-download.md): the page downloads the IWAD (default: shareware `DOOM1.WAD` from its own origin, D14), checks it, caches it in IndexedDB, a file picker for one's own copy, clear errors, hosting notes | done, 28 Nov 2026 (play-test pending: steps in its Outcome) |
 | F4 | [Hot join over a lossy link](F4-hot-join-lossy.md) (`bugs.md` L31, L35, L54, and L53 for games without bots): `PT_STATE` ordered by a sequence number, the causes of the lossy-join divergence found and fixed, the bob saved in every game, the impaired relay test the default again | done, 28 Nov 2026 (savegame 10150, `NETWORK_VERSION` 27; the pause travels in the tic stream as `XD_NETWAIT`; L68 logged) |
+| 04 | [Browser netplay](04-browser-netplay.md): vnet in the wasm build (WebTransport, then WebSocket), browser and native players in every combination, a join in progress from and into the browser, impairment, failures shown on the page, the connect loop's spin (`bugs.md` L60) | in progress |
+| 04b | Hidden and slow tabs in a network game (`bugs.md` L59, L29, L63, L64) | not written |
 
 ## Settled decisions
 
