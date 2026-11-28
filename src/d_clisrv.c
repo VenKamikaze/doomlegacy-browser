@@ -1775,12 +1775,14 @@ static void
 
 // [WDJ] Update state by sever.
 // By Server
+static byte  state_seq = 0;  // sequence number of PT_STATE
 void SV_Send_State( byte server_pause )
 {
     netbuffer->packettype=PT_STATE;
     write_N32( & netbuffer->u.state.gametic, gametic );
     get_random_state( & netbuffer->u.state.rs ); // to sync P_Random
     netbuffer->u.state.server_pause = server_pause;
+    netbuffer->u.state.seq = ++state_seq;  // the order of sending, for the client (L31)
 
     SV_SendPacket_All( SP_reliable, sizeof(state_pak_t), NULL );
 }
@@ -1790,44 +1792,64 @@ void SV_Send_State( byte server_pause )
 // PT_STATE carries. The client may receive it a tic or more before it gets
 // there, as when it has just loaded the savegame of a join, and then it must
 // keep running the tics before that gametic in the old state, as the server did.
-#define PENDING_PAUSE_MAX  4
-static struct { tic_t tic; byte value; }  pending_pause[PENDING_PAUSE_MAX];
-static byte  pending_pause_cnt = 0;  // sorted by tic, oldest first
+//
+// d_net.c hands on reliable packets in the order they arrive, which on a lossy or
+// jittery link is not the order the server sent them (L31). Each PT_STATE therefore
+// carries a sequence number, in the order of sending. The client orders its changes
+// by (server gametic, sequence), applies a change for a tic it has not run yet whatever
+// the order of arrival, and drops a change that is a duplicate or that an already applied
+// change of a later sequence supersedes.
+#define PENDING_PAUSE_MAX  8
+static struct { tic_t tic; byte seq; byte value; }  pending_pause[PENDING_PAUSE_MAX];
+static byte  pending_pause_cnt = 0;  // sorted by (tic, seq), oldest first
+
+#define PAUSE_SEEN_MAX  32  // duplicates are looked for among the last of these
+static byte  pause_seen[PAUSE_SEEN_MAX];
+static byte  pause_seen_cnt = 0, pause_seen_next = 0;
+static byte  pause_last_seq = 0;      // the last sequence number taken, or made up for a sender without
+static byte  pause_applied_seq = 0;   // the sequence number of the change applied last
+static byte  pause_applied_valid = 0;
 
 // Forget pending changes, for a new game or a closed connection.
 static void CL_Apply_Pending_Pause( void );
-static tic_t  pause_high_tic = 0;  // highest server gametic of a PT_STATE accepted
 
 void CL_Clear_Pending_Pause( void )
 {
     pending_pause_cnt = 0;
-    pause_high_tic = 0;
+    pause_seen_cnt = pause_seen_next = 0;
+    pause_applied_valid = 0;
 }
 
-// Queue a pause value for gametic tic. An entry for the same tic is replaced.
-// If the queue is full, the oldest entry is applied at once and dropped (the
-// client is then early for that change by at most the queue's span; the
-// consistency check repairs what that causes).
-static void CL_Queue_Pause( tic_t tic, byte value )
+// Sequence numbers wrap: a is before b when it is less than half the range behind.
+static inline boolean pause_seq_before( byte a, byte b )
+{
+    return (int8_t)( a - b ) < 0;
+}
+
+// Queue a pause value for server gametic tic, in order of (tic, seq). If the
+// queue is full, the oldest entry is applied at once and dropped (the client
+// is then early for that change by at most the queue's span; the consistency
+// check repairs what that causes).
+static void CL_Queue_Pause( tic_t tic, byte seq, byte value )
 {
     byte i, j;
-    for( i=0; i<pending_pause_cnt; i++ )
-    {
-        if( pending_pause[i].tic == tic )
-        {
-            pending_pause[i].value = value;
-            return;
-        }
-    }
     if( pending_pause_cnt >= PENDING_PAUSE_MAX )
     {
         paused = pending_pause[0].value;
+        pause_applied_seq = pending_pause[0].seq;
+        pause_applied_valid = 1;
         for( j=1; j<pending_pause_cnt; j++ )  pending_pause[j-1] = pending_pause[j];
         pending_pause_cnt--;
     }
-    for( i=0; i<pending_pause_cnt && pending_pause[i].tic < tic; i++ ) ;
+    for( i=0; i<pending_pause_cnt; i++ )
+    {
+        if( pending_pause[i].tic > tic
+            || (pending_pause[i].tic == tic && pause_seq_before( seq, pending_pause[i].seq )) )
+            break;
+    }
     for( j=pending_pause_cnt; j>i; j-- )  pending_pause[j] = pending_pause[j-1];
     pending_pause[i].tic = tic;
+    pending_pause[i].seq = seq;
     pending_pause[i].value = value;
     pending_pause_cnt++;
 }
@@ -1848,6 +1870,8 @@ static void CL_Apply_Pending_Pause( void )
     {
         byte j;
         paused = pending_pause[0].value;
+        pause_applied_seq = pending_pause[0].seq;
+        pause_applied_valid = 1;
         if( testdump_active )
             GenPrintf( EMSG_warn, "TEST: pause %d applied at gametic %u (server's tic %u)\n",
                          paused, (unsigned) gametic, (unsigned) pending_pause[0].tic );
@@ -1856,13 +1880,66 @@ static void CL_Apply_Pending_Pause( void )
     }
 }
 
+// Take one PT_STATE change (the packet's fields; the random state is not looked at).
+// seq is the sender's sequence number.
+static void CL_Pause_Change( tic_t serv_gametic, byte seq, byte value )
+{
+    byte j, k;
+
+    for( j=0; j<pause_seen_cnt; j++ )
+    {
+        if( pause_seen[j] == seq )
+        {
+            if( testdump_active )
+                GenPrintf( EMSG_warn, "TEST: PT_STATE sequence %u for server gametic %u is a duplicate, dropped\n", seq, (unsigned) serv_gametic );
+            return;
+        }
+    }
+    pause_seen[pause_seen_next] = seq;
+    pause_seen_next = (pause_seen_next + 1) % PAUSE_SEEN_MAX;
+    if( pause_seen_cnt < PAUSE_SEEN_MAX )  pause_seen_cnt++;
+
+    if( pause_applied_valid && pause_seq_before( seq, pause_applied_seq ) )
+    {
+        // A change that came before one that was already applied: it is no longer the
+        // server's state (the client is past its tic, and a later change ruled).
+        if( testdump_active )
+            GenPrintf( EMSG_warn, "TEST: PT_STATE sequence %u for server gametic %u is older than the applied %u, dropped\n", seq, (unsigned) serv_gametic, pause_applied_seq );
+        return;
+    }
+    if( serv_gametic > gametic )
+    {
+        // Takes effect when the client gets to the server's gametic.
+        CL_Queue_Pause( serv_gametic, seq, value );
+    }
+    else
+    {
+        // Already there (or late: the packet was resent or delayed). Apply it now,
+        // and drop the queued changes it supersedes (of an earlier sequence).
+        for( j=0, k=0; j<pending_pause_cnt; j++ )
+            if( ! pause_seq_before( pending_pause[j].seq, seq ) )  pending_pause[k++] = pending_pause[j];
+        pending_pause_cnt = k;
+        paused = value;
+        pause_applied_seq = seq;
+        pause_applied_valid = 1;
+    }
+}
+
 // By Client
 static void state_handler( void )
 {
     byte nnode = doomcom->remotenode;
+    byte seq;
 
     // Message is PT_STATE
     tic_t serv_gametic = read_N32( & netbuffer->u.state.gametic );
+    // A sender from before F4 does not send the sequence number (the packet is a byte
+    // shorter): take them in the order they arrive, as it was.
+    if( doomcom->datalength >= PACKET_BASE_SIZE + sizeof(state_pak_t) )
+        seq = netbuffer->u.state.seq;
+    else
+        seq = pause_last_seq + 1;
+    pause_last_seq = seq;
     if( serv_gametic != gametic )
     {
         if( verbose > 1 )
@@ -1876,32 +1953,8 @@ static void state_handler( void )
         random_state_checkset( & netbuffer->u.state.rs, "PT_STATE", RSC_client_set ); // to sync P_Random
     }
     if( testdump_active )
-        GenPrintf( EMSG_warn, "TEST: PT_STATE pause %d for server gametic %u, client gametic %u\n", netbuffer->u.state.server_pause, (unsigned) serv_gametic, (unsigned) gametic );
-    if( serv_gametic < pause_high_tic )
-    {
-        // An older change arriving late (d_net hands on out-of-order reliable
-        // packets as they come): a newer one was already accepted.
-        if( testdump_active )
-            GenPrintf( EMSG_warn, "TEST: PT_STATE for server gametic %u ignored (newer %u accepted)\n", (unsigned) serv_gametic, (unsigned) pause_high_tic );
-        return;
-    }
-    pause_high_tic = serv_gametic;
-    if( serv_gametic > gametic )
-    {
-        // Takes effect when the client gets to the server's gametic.
-        CL_Queue_Pause( serv_gametic, netbuffer->u.state.server_pause );
-    }
-    else
-    {
-        // Already there (or late: PT_STATE is reliable but not delivered in
-        // order, and a resent one can be late). Apply it now, and drop the
-        // queued changes it supersedes.
-        byte j, k = 0;
-        for( j=0; j<pending_pause_cnt; j++ )
-            if( pending_pause[j].tic > serv_gametic )  pending_pause[k++] = pending_pause[j];
-        pending_pause_cnt = k;
-        paused = netbuffer->u.state.server_pause;
-    }
+        GenPrintf( EMSG_warn, "TEST: PT_STATE pause %d for server gametic %u, client gametic %u, sequence %u\n", netbuffer->u.state.server_pause, (unsigned) serv_gametic, (unsigned) gametic, seq );
+    CL_Pause_Change( serv_gametic, seq, netbuffer->u.state.server_pause );
 
 #if 0
     debug_Printf( "STATE: gametic %i, P_Random [%i], paused %i\n",
@@ -6137,4 +6190,128 @@ void NetUpdate(void)
         M_Ticker ();
         CON_Ticker();
     }
+}
+
+
+// ----- Test-only check of the order of the pause changes (F4, bugs.md L31)
+
+// -testpauseorder: feeds CL_Pause_Change the changes of a server timeline in every order of
+// arrival (each one arriving on time: the client has not run its tic yet; with and without a
+// duplicate of each), and checks that `paused` before each tic is what the server had.
+// Prints "TEST: pauseorder: N cases, M failures"; returns the number of failures.
+int CL_TestPauseOrder( void )
+{
+    typedef struct { int dtic; byte value; } ev_t;
+    // server timelines: pause and unpause for the same gametic (the pair of a join in
+    // progress), for the next one (the join of L31 case 1), and longer ones
+    static const ev_t tl0[] = { {0,1}, {0,0} };
+    static const ev_t tl1[] = { {0,1}, {1,0} };
+    static const ev_t tl2[] = { {0,1}, {0,0}, {2,1} };
+    static const ev_t tl3[] = { {0,1}, {0,0}, {1,1}, {3,0} };
+    static const struct { const ev_t * ev; int n; } tl[] = {
+        { tl0, 2 }, { tl1, 2 }, { tl2, 3 }, { tl3, 4 } };
+    static const int lags[] = { 0, 1, 2, 100 };
+    static const byte seq0[] = { 0, 254 };  // the second makes the numbers wrap in a timeline
+    const tic_t T = 1000;
+    tic_t save_gametic = gametic;
+    byte  save_paused = paused;
+    int cases = 0, fails = 0;
+    int t, k, i, j, p, d, l, sq, nperm;
+
+    for( t=0; t<(int)(sizeof(tl)/sizeof(tl[0])); t++ )
+    {
+        int n = tl[t].n;
+        for( sq=0; sq<(int)sizeof(seq0); sq++ )
+        for( l=0; l<(int)(sizeof(lags)/sizeof(lags[0])); l++ )
+        for( d=0; d<2; d++ )
+        {
+            // every permutation of 0..n-1 (n <= 4), by counting
+            nperm = 1;  for( k=2; k<=n; k++ )  nperm *= k;
+            for( p=0; p<nperm; p++ )
+            {
+                int avail[4], na = n, code = p, order[4], when[4], now = (int) T - 5;
+                int expect[16], got[16], bad = 0;
+                for( i=0; i<n; i++ )  avail[i] = i;
+                for( i=0; i<n; i++ )
+                {
+                    int pick = code % na;  code /= na;
+                    order[i] = avail[pick];
+                    for( j=pick; j<na-1; j++ )  avail[j] = avail[j+1];
+                    na--;
+                }
+                // time of arrival: as late as the lag says, never before the one before,
+                // and not after the event's own tic (the client has not run it yet)
+                for( i=0; i<n; i++ )
+                {
+                    int own = (int) T + tl[t].ev[order[i]].dtic;
+                    int at = own - lags[l];
+                    if( at < now )  at = now;
+                    if( at > own )  { bad = -1; break; }  // not on time: outside what is promised
+                    when[i] = at;  now = at;
+                }
+                if( bad < 0 )  continue;
+                cases++;
+                CL_Clear_Pending_Pause();
+                paused = 0;
+                for( k=0; k<12; k++ )
+                {
+                    int tic = (int) T - 5 + k;
+                    int ex = 0;
+                    for( j=0; j<n; j++ )
+                        if( (int) T + tl[t].ev[j].dtic <= tic )  ex = tl[t].ev[j].value;  // later sequence wins
+                    expect[k] = ex;
+                    gametic = tic;
+                    for( i=0; i<n; i++ )
+                    {
+                        if( when[i] != tic )  continue;
+                        {
+                            int e = order[i];
+                            byte sqn = (byte)( seq0[sq] + e );
+                            CL_Pause_Change( T + tl[t].ev[e].dtic, sqn, tl[t].ev[e].value );
+                            if( d )  CL_Pause_Change( T + tl[t].ev[e].dtic, sqn, tl[t].ev[e].value );
+                        }
+                    }
+                    CL_Apply_Pending_Pause();
+                    got[k] = paused;
+                    if( got[k] != expect[k] )  bad = 1;
+                }
+                if( bad )
+                {
+                    fails++;
+                    if( fails <= 5 )
+                    {
+                        printf( "TEST: pauseorder FAIL timeline %d, arrival", t );
+                        for( i=0; i<n; i++ )  printf( " %d@%d", order[i], when[i] - (int) T );
+                        printf( ", dup %d, seq0 %u: paused before tics T-5..T+6 is", d, seq0[sq] );
+                        for( k=0; k<12; k++ )  printf( " %d", got[k] );
+                        printf( ", want" );
+                        for( k=0; k<12; k++ )  printf( " %d", expect[k] );
+                        printf( "\n" );
+                    }
+                }
+            }
+        }
+    }
+
+    // A change that arrives after the client has passed its tic and after a later one was
+    // applied is dropped: the pause (sequence 1) after the unpause (sequence 2)
+    cases++;
+    CL_Clear_Pending_Pause();
+    paused = 0;
+    gametic = T + 3;
+    CL_Pause_Change( T + 1, 2, 0 );  // the unpause is first, for a tic the client has passed: applied now
+    CL_Pause_Change( T, 1, 1 );      // the older pause, late: dropped
+    CL_Apply_Pending_Pause();
+    if( paused != 0 )
+    {
+        fails++;
+        printf( "TEST: pauseorder FAIL: a late older pause was applied after a newer unpause\n" );
+    }
+
+    CL_Clear_Pending_Pause();
+    gametic = save_gametic;
+    paused = save_paused;
+    printf( "TEST: pauseorder: %d cases, %d failures\n", cases, fails );
+    fflush( stdout );
+    return fails;
 }

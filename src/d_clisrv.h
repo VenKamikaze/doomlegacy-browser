@@ -393,6 +393,7 @@ typedef struct {
    N32_t       gametic;
    random_state_t  rs;  // P_Random, etc.
    byte        server_pause; // silent pause
+   byte        seq;  // order of sending, wraps (F4, bugs.md L31); older builds ignore it
 } state_pak_t;
 
 // [WDJ] As of 9/2016 there are 37 CV_NETVAR.
@@ -578,6 +579,8 @@ extern consvar_t cv_SV_download_files;
 extern consvar_t cv_SV_download_savegame;
 extern consvar_t cv_SV_netrepair;
 void CL_Clear_Pending_Pause( void );
+// Test-only (-testpauseorder): checks the order of the pause changes; returns the failures.
+int CL_TestPauseOrder( void );
 extern consvar_t cv_wait_players;
 extern consvar_t cv_wait_timeout;
 extern consvar_t cv_allownewplayer;
