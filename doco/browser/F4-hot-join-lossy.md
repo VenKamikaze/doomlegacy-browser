@@ -209,4 +209,4 @@ Re-run after the fixes, one at a time, on the final tree: `servertic-sections.sh
 - `tic_hold` is set with `next_tic_send` in `TryRunTics`'s "start a game after a demo" branch, where `SV_Send_Tic_Update` is skipped.
 - **10150 savegames written by the tree from `c58a1c9` to `5303ed1` have no pause byte (added in `608d06c`) and will not load.** 10150 was never merged, so the version number was not raised; `code-facts.md` §8 says so.
 - `test-drone.sh` and `test-two-joiners.sh` no longer print bash's "Killed" job messages.
-- Re-run: @R2@
+- Re-run: `demo-hash.sh` 11 of 11 (297 s; demo playback unaffected); `test-drone.sh` PASS (16 s); `test-two-joiners.sh` PASS (34 s); one plain hot join PASS (57 s); one lossy hot join PASS (56 s); `savegame-f3.sh` 10 of 10 (210 s); `savegame-portable.sh` savegame-portable: 117 passed, 0 failed, 14 saves, 577 s.
