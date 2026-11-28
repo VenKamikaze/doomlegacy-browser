@@ -23,7 +23,7 @@ The goal is Doom Legacy playable in a browser (Emscripten/WASM), **with its musi
 | F3 | [Bots and joining a game in progress](F3-bots-hot-join.md) (`bugs.md` L23, L24; also L20, L45, L46, L51 to L53) | done, 27 Nov 2026 (bot aim without libm, a bot's whole state in the savegame; L54 logged for F4) |
 | 02 | [The Emscripten port](02-emscripten-port.md): ASYNCIFY yields in the blocking loops, a page with click to start, keyboard, mouse, sound effects, IDBFS for config and saves | done, 27 Nov 2026 (play-test pending: steps in its Outcome) |
 | 03 | [Data download](03-data-download.md): the page downloads the IWAD (default: shareware `DOOM1.WAD` from its own origin, D14), checks it, caches it in IndexedDB, a file picker for one's own copy, clear errors, hosting notes | done, 28 Nov 2026 (play-test pending: steps in its Outcome) |
-| F4 | Joining a game in progress over a lossy or reordering link (`bugs.md` L31, L35): `PT_STATE` sequence number, the cause of L35, brief 01's AC4 at its full values | queued, before 04 |
+| F4 | [Hot join over a lossy link](F4-hot-join-lossy.md) (`bugs.md` L31, L35, L54, and L53 for games without bots): `PT_STATE` ordered by a sequence number, the causes of the lossy-join divergence found and fixed, the bob saved in every game, the impaired relay test the default again | in progress |
 
 ## Settled decisions
 

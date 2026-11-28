@@ -39,7 +39,7 @@ You work **one chunk at a time**. For each chunk you write a brief, have it impl
   - test data is Freedoom and `DOOM1.WAD`;
   - the git model is `claudeai`, `browser/NN-*` and `fix/*`.
 - **Not checked yet:** whether upstream SVN has fixed L1, L13, L15, L21 or L22, and whether its maintainer accepts patches. SourceForge can't be read from the cloud container; the user can check (F1's Outcome has the command).
-- **Next:** F4 (hot join over a lossy link: L31, L35, L54, and L53 for games without bots), then 04. Briefs 02 and 03 are done (27 and 28 Nov 2026); their play-test steps are in their Outcomes. 03's default data is the shareware `DOOM1.WAD` (D14). The user (27 Nov 2026) left the order and the optional L43 hardening to the coordinator, on token budget: the order stays 02, 03, F4, 04, and L43 hardening is **not queued** (logged only; pick it up if a hostile-peer brief needs it).
+- **Next:** F4 (`F4-hot-join-lossy.md`: L31, L35, L54, and L53 for games without bots), started 28 Nov 2026; then 04. Briefs 02 and 03 are done (27 and 28 Nov 2026); their play-test steps are in their Outcomes. 03's default data is the shareware `DOOM1.WAD` (D14).
 
 ## 1. Read first, in this order
 
