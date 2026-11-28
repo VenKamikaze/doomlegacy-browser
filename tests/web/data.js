@@ -656,10 +656,10 @@ async function main() {
       const o = await fresh(e);
       await load(e, o.page, QUERY());
       const before = await o.page.evaluate(() => window.dlTest.readFile('legacy.wad').length);
-      const d = await pickNamed(o.page, 'LEGACY.WAD', iwad(['FOO', 'BAR']));
+      const d = await pickNamed(o.page, 'legacy.wad', iwad(['FOO', 'BAR']));
       const after = await o.page.evaluate(() => window.dlTest.readFile('legacy.wad').length);
       const c = await cacheInfo(o.page);
-      t.check(d && d.name === 'game.wad' && before === after && before > 100000, `an IWAD picked as LEGACY.WAD gets a neutral name (${d && d.name}) and /work/legacy.wad is untouched (${before} then ${after} bytes)`);
+      t.check(d && d.name === 'game.wad' && before === after && before > 100000, `an IWAD picked as legacy.wad (MEMFS is case-sensitive: the exact name the build uses) gets a neutral name (${d && d.name}) and /work/legacy.wad is untouched (${before} then ${after} bytes)`);
       t.check(c.records.length === 1 && c.records[0].name === 'game.wad', 'the cached record has the neutral name too');
       await o.context.close();
     });

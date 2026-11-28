@@ -260,6 +260,15 @@
       return s.put(rec);
     });
   };
+  // Deletes the record under `key` only if it is still the one with this id: two quick picks share the key `local`, and
+  // the cleanup of a cancelled one must not remove the record of the pick that replaced it.
+  Cache.prototype.delIfOwn = function (key, id) {
+    return run(this.db, 'files', 'readwrite', function (s) {
+      var g = s.get(key);
+      g.onsuccess = function () { if (g.result && g.result.id === id) { s.delete(key); } };
+      return g;
+    });
+  };
   Cache.prototype.getMeta = function (key) {
     return run(this.db, 'meta', 'readonly', function (s) { return s.get(key); }).then(function (r) { return r ? r.value : null; });
   };
@@ -421,7 +430,7 @@
       if (!cache) { return Promise.resolve(false); }
       checkCancelled();
       return cache.put(rec).then(function () {
-        if (cancelled()) { cache.del(rec.key).catch(function () {}); checkCancelled(); }
+        if (cancelled()) { cache.delIfOwn(rec.key, rec.id).catch(function () {}); checkCancelled(); }
         if (setSource !== false) { return cache.setMeta('source', rec.key === LOCAL_KEY ? 'local' : 'url'); }
       }).then(function () {
         askPersistent();
@@ -434,7 +443,8 @@
     }
     function newRecord(k, bytes, hash, extra) {
       return Object.assign({ key: k, schema: SCHEMA, config: sig(o, absolute), size: bytes.length, sha256: hash,
-                             bytes: bytes.buffer.byteLength === bytes.length ? bytes.buffer : bytes.slice().buffer, storedAt: Date.now() }, extra);
+                             bytes: bytes.buffer.byteLength === bytes.length ? bytes.buffer : bytes.slice().buffer, storedAt: Date.now(),
+                             id: Math.random().toString(36).slice(2) + Date.now().toString(36) }, extra);
     }
     function result(rec, from, extra) {
       var entry = identify(rec.size, rec.sha256);

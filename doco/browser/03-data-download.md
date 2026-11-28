@@ -269,3 +269,10 @@ Things only a person can check: the file picker dialog in Firefox; the persisten
 | a temporary edit of `page.js` (overlay hidden, `dlStarts` 1 after a data error) | 3 `exits.js` checks (case 2 overlay, case 2 not started, case 6 not started) |
 
 Item 9 has no check. The worktree used for this round is `/home/user/review-03`.
+
+**Fix round 2** (re-review: three nits, two fixed, one kept)
+
+- **Two quick picks:** both use the key `local`, so the cleanup of a cancelled pick (`store()` removes its record if the abort came between `put` and `setMeta`) could delete the record of the pick that replaced it. Each record now has an `id` and the cleanup (`Cache.delIfOwn`) deletes only if the stored record still carries this load's id, inside one readwrite transaction. No check: the race (the second pick committing between the first's `put` and its cleanup) cannot be made to happen on demand in a page.
+- **The `legacy.wad` test** now picks `legacy.wad` in lower case (MEMFS is case-sensitive, so `LEGACY.WAD` could never overwrite the file). `DATA_SABOTAGE=legacy` now fails the "untouched" check too: `/work/legacy.wad` went from 962,192 to 52 bytes (2 checks fail: untouched, and the cached record's name).
+- **Kept as it is:** a file's own engine name wins over its lumps, as for a native player; a Heretic file renamed `doom.wad` runs as the engine decides (also in `code-facts.md` section 14).
+- **Counts:** `data.js` 159 of 159, `exits.js` 18 of 18.
