@@ -363,6 +363,9 @@ static byte     update_player_count_request = 0;  // for XNetCmd, as the list is
 // Index using BTIC_INDEX
 static byte     netcmd_tic_hash[BACKUPTICS];  // tic hash for the BACKUPTIC
 static byte     netseq[BACKUPTICS];   // bit per tic packet seq, ready=0xFF
+// The number of tics of the packet whose sections netseq[] records, at its start tic's slot.
+// Packets with the same start tic but another length are split in other sections (L35).
+static byte     netseq_numtics[BACKUPTICS];
 ticcmd_t        netcmds[BACKUPTICS][MAXPLAYERS];
 
 // [WDJ] Combined textcmd buffer for all players, and server.
@@ -518,6 +521,7 @@ static void D_Clear_ticcmd(int tic)
 
     netcmd_tic_hash[btic] = 0;
     netseq[btic] = 0;
+    netseq_numtics[btic] = 0;
 
     for(i=0;i<MAXPLAYERS;i++)
     {
@@ -5390,6 +5394,16 @@ static void servertic_handler( byte nnode )
             // first packet for this tic, clear old stuff
             D_Clear_ticcmd(btic);
             netcmd_tic_hash[btic] = start_tic_hash;  // after clear
+        }
+        // The sections of a packet are recorded at its start tic's slot, which is the one
+        // read below. Another packet with the same start tic and another length is split
+        // in other sections, so it cannot add to these: start again (L35, the client took
+        // a packet of 30 tics as complete from the single tic packet of its start tic, and
+        // ran on the stale ticcmds of its lost second section).
+        if( (ti == start_tic) && (netseq_numtics[btic] != netbuffer->u.serverpak.numtics) )
+        {
+            netseq[btic] = 0;
+            netseq_numtics[btic] = netbuffer->u.serverpak.numtics;
         }
         // When this was in textcmds, it would only record for those that
         // had actually sent a textcmd.
