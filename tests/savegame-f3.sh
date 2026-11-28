@@ -164,16 +164,20 @@ joinpair() {   # joinpair NAME SERVER_BIN CLIENT_BIN
 if [ "$join" = 1 ]; then
     echo "== a join between the old build and this build, over UDP on loopback"
     joinpair old-server "$old" "$native"
-    if grep -q 'Invalid savegame: wrong version\|Incompatible client' "$work/old-server/c/out.txt" "$work/old-server/s/out.txt"; then
-        ok "new client, old server: $(grep -h 'Invalid savegame\|Incompatible client' "$work/old-server/c/out.txt" "$work/old-server/s/out.txt" | head -1)"
+    # the new client says the server refused it for its version, and was not let in
+    if grep -q 'Server [0-9]* refuses connection: Incompatible client' "$work/old-server/c/out.txt" \
+       && ! grep -q 'Join accepted' "$work/old-server/c/out.txt"; then
+        ok "new client, old server: $(grep -h 'refuses connection' "$work/old-server/c/out.txt" | head -1 | cut -c1-100)"
     else
-        bad "new client, old server: no 'wrong version' message: $(tail -3 "$work/old-server/c/out.txt" "$work/old-server/s/out.txt" | tr '\n' '|')"
+        bad "new client, old server: the client did not log the server's refusal 'Incompatible client' (or was accepted): $(tail -3 "$work/old-server/c/out.txt" | tr '\n' '|')"
     fi
     joinpair new-server "$native" "$old"
-    if grep -q 'Invalid savegame: wrong version\|Incompatible client' "$work/new-server/c/out.txt" "$work/new-server/s/out.txt"; then
-        ok "old client, new server: $(grep -h 'Invalid savegame\|Incompatible client' "$work/new-server/c/out.txt" "$work/new-server/s/out.txt" | head -1)"
+    # the new server logs the refusal and sends no savegame (the old client has nothing to log)
+    if grep -q 'Incompatible client: legacy' "$work/new-server/s/out.txt" \
+       && ! grep -q 'Send savegame' "$work/new-server/s/out.txt"; then
+        ok "old client, new server: $(grep -h 'Incompatible client' "$work/new-server/s/out.txt" | head -1 | cut -c1-100)"
     else
-        bad "old client, new server: no 'wrong version' message: $(tail -3 "$work/new-server/c/out.txt" "$work/new-server/s/out.txt" | tr '\n' '|')"
+        bad "old client, new server: the server did not log 'Incompatible client' (or sent a savegame): $(tail -3 "$work/new-server/s/out.txt" | tr '\n' '|')"
     fi
 fi
 

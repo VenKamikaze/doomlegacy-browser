@@ -16,7 +16,7 @@
 #                                              # who is moving at the join (bugs.md L53). Try 330 400: the join is at about tic 360
 #   tests/net/test-hot-join.sh --lossy SPEC    # make both machines' datagrams lossy (-testimpair SPEC, no root), e.g.
 #                                              # loss=3,dup=2,reorder=3; the server's seed is --seed, the client's --seed + 1
-#   tests/net/test-hot-join.sh --seed N        # the seed of the impairment (default 1); a failing run is replayed with its seed
+#   tests/net/test-hot-join.sh --seed N        # the seed of the impairment (default 1); the same seed rolls the same dice in the same order, but which datagram each roll hits depends on timing: a seed does not replay a failure
 #   tests/net/test-hot-join.sh --runs N        # N runs, seeds --seed .. --seed + N - 1; "k of N passed"; exit 1 unless all
 #                                              # passed. With --keep DIR each run keeps its files in DIR/run-SEED
 #
@@ -31,7 +31,7 @@
 #   - the client's file starts at the join tic and holds at least --play seconds of tics;
 #   - the join's pause is long enough to see (the server keeps it 5 tics longer, -testunpausedelay 5) and
 #     the client log shows the pause and the unpause executed in the tic stream, as the server did
-#     ("TEST: pause N applied at gametic ...");
+#     ("TEST: pause 64 applied at gametic ..." and "TEST: pause 0 applied at gametic ...", both required);
 #   - every tic that both files have is identical (tests/tools/testdump-diff.py --common);
 #   - the server kept running the whole time (its last tic is within 5 of the client's);
 #   - the game was not idle: the client's files shows the P_Random index moving (monsters
@@ -183,7 +183,9 @@ check "the server was still running at the end" $((1 - s_alive))
 check "the client was still running at the end" $((1 - c_alive))
 if [ "$together" = 0 ] && [ "$force" = 1 ]; then
     check "the client executed the join's pause in the tic stream (kept 5 tics longer by -testunpausedelay)" \
-        $(grep -q "TEST: pause [0-9]* applied at gametic" "$work/c/out.txt" && echo 0 || echo 1)
+        $(grep -q "TEST: pause [1-9][0-9]* applied at gametic" "$work/c/out.txt" && echo 0 || echo 1)
+    check "the client executed its end, the unpause, in the tic stream" \
+        $(grep -q "TEST: pause 0 applied at gametic" "$work/c/out.txt" && echo 0 || echo 1)
 fi
 check "the client played at least $play s of tics ($cn >= $need)" $([ "$cn" -ge "$need" ] && echo 0 || echo 1)
 if [ "$cn" -gt 0 ] && [ "$sn" -gt 0 ]; then
