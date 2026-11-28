@@ -186,7 +186,7 @@
 
 // The addition of wait messages should be transparent to previous network
 // versions.
-const int  NETWORK_VERSION = 27; // separate version number for network protocol (obsolete; 27: PT_STATE has a sequence number and a scheduled flag, F4)
+const int  NETWORK_VERSION = 27; // separate version number for network protocol (obsolete; 27: PT_STATE has a sequence number, and XD_NETWAIT)
 
 
 #define JOININGAME
@@ -365,7 +365,7 @@ static byte     update_player_count_request = 0;  // for XNetCmd, as the list is
 static byte     netcmd_tic_hash[BACKUPTICS];  // tic hash for the BACKUPTIC
 static byte     netseq[BACKUPTICS];   // bit per tic packet seq, ready=0xFF
 // The number of tics of the packet whose sections netseq[] records, at its start tic's slot.
-// Packets with the same start tic but another length are split in other sections (L35).
+// Packets with the same start tic but another length are split in other sections.
 static byte     netseq_numtics[BACKUPTICS];
 ticcmd_t        netcmds[BACKUPTICS][MAXPLAYERS];
 
@@ -1784,7 +1784,7 @@ void SV_Send_State( byte server_pause )
     write_N32( & netbuffer->u.state.gametic, gametic );
     get_random_state( & netbuffer->u.state.rs ); // to sync P_Random
     netbuffer->u.state.server_pause = server_pause;
-    netbuffer->u.state.seq = ++state_seq;  // the order of sending, for the client (L31)
+    netbuffer->u.state.seq = ++state_seq;  // the order of sending, for the client
 
     SV_SendPacket_All( SP_reliable, sizeof(state_pak_t), NULL );
 }
@@ -1793,12 +1793,12 @@ void SV_Send_State( byte server_pause )
 // carries. The client may receive it a tic or more before it gets
 // there, as when it has just loaded the savegame of a join, and then it must
 // keep running the tics before that gametic in the old state, as the server did.
-// (The network wait's pause for a join in progress is not sent in PT_STATE since F4,
+// (The network wait's pause for a join in progress is not sent in PT_STATE,
 // see XD_NETWAIT: a PT_STATE can be late or lost, and a client that has run the tic by
 // then is out of step.)
 //
 // d_net.c hands on reliable packets in the order they arrive, which on a lossy or
-// jittery link is not the order the server sent them (L31). Each PT_STATE therefore
+// jittery link is not the order the server sent them. Each PT_STATE therefore
 // carries a sequence number, in the order of sending. The client orders its changes
 // by (server gametic, sequence), applies a change for a tic it has not run yet whatever
 // the order of arrival, and drops a change that is a duplicate or that an already applied
@@ -1938,7 +1938,7 @@ static void state_handler( void )
 
     // Message is PT_STATE
     tic_t serv_gametic = read_N32( & netbuffer->u.state.gametic );
-    // A sender from before F4 does not send the sequence number (the packet is a byte
+    // A sender without the sequence number (an older build: the packet is a byte
     // shorter): take them in the order they arrive, as it was.
     if( doomcom->datalength >= PACKET_BASE_SIZE + sizeof(state_pak_t) )
         seq = netbuffer->u.state.seq;
@@ -1980,7 +1980,7 @@ static byte      network_wait_pause = 0;
 // tic: the pause starts with the next one). A PT_STATE, a packet of its own for a gametic, could
 // come after a client had run that tic, because the client had caught up with the server, or the
 // packet was late or lost and sent again, and the client was then out of step: it ran a tic
-// paused that the server ran unpaused, or the other way round (L31; the pause and unpause of a join
+// paused that the server ran unpaused, or the other way round (the pause and unpause of a join
 // are often for the same gametic). A client cannot run a tic without its text commands, so it
 // stalls instead. The joiner is sent the tics from the savegame's on and so gets them too.
 // network_wait_pause is the server's own record that a wait is on, and what `paused` was before it.
@@ -3869,7 +3869,7 @@ void D_Init_ClientServer (void)
     Register_NetXCmd(XD_KICK, Got_NetXCmd_KickCmd);
     Register_NetXCmd(XD_ADDPLAYER, Got_NetXCmd_AddPlayer);
     Register_NetXCmd(XD_ADDBOT, Got_NetXCmd_AddBot);	//added by AC for acbot
-    Register_NetXCmd(XD_NETWAIT, Got_NetXCmd_NetWait);  // F4
+    Register_NetXCmd(XD_NETWAIT, Got_NetXCmd_NetWait);
 
     CV_RegisterVar (&cv_allownewplayer);
     CV_RegisterVar (&cv_maxplayers);
@@ -5540,7 +5540,7 @@ static void servertic_handler( byte nnode )
             {
                 // num_cmds counts ticcmds, not tics: a packet section ends where its
                 // ticcmds do, also within a tic (the next section goes on from there), and
-                // what follows them in the buffer is not ticcmds (L35, L54).
+                // what follows them in the buffer is not ticcmds.
                 if( num_cmds == 0 )  break;
                 num_cmds --;
                 // Use list of pid generated from cmd_player_mask.
@@ -6137,7 +6137,7 @@ static void SV_Send_Tic_Update( int count )
 
     // A node that is joining (SV_AddNode: nettics is the tic of its savegame) gets the tics
     // from there on, once it is a client, text commands included. They must not be erased
-    // or written over before: the pause of the join and a player's chat are among them (L31).
+    // or written over before: the pause of the join and a player's chat are among them.
     hold = next_tic_send;
     for( nn=0; nn<MAXNETNODES; nn++)
     {
@@ -6254,7 +6254,7 @@ void NetUpdate(void)
 }
 
 
-// ----- Test-only check of the order of the pause changes (F4, bugs.md L31)
+// ----- Test-only check of the order of the pause changes
 
 // -testpauseorder: feeds CL_Pause_Change the changes of a server timeline in every order of
 // arrival (each one arriving on time: the client has not run its tic yet; with and without a
@@ -6264,7 +6264,7 @@ int CL_TestPauseOrder( void )
 {
     typedef struct { int dtic; byte value; } ev_t;
     // server timelines: pause and unpause for the same gametic (the pair of a join in
-    // progress), for the next one (the join of L31 case 1), and longer ones
+    // progress), for the next one (a pause ordered after the unpause), and longer ones
     static const ev_t tl0[] = { {0,1}, {0,0} };
     static const ev_t tl1[] = { {0,1}, {1,0} };
     static const ev_t tl2[] = { {0,1}, {0,0}, {2,1} };

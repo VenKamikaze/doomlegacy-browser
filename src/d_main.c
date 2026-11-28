@@ -3482,7 +3482,7 @@ fatal_error_action:
     }
 
     TestDump_Init();  // test-only option -testdump
-    if( M_CheckParm( "-testpauseorder" ) )  // test-only: the order of PT_STATE pause changes (F4, L31)
+    if( M_CheckParm( "-testpauseorder" ) )  // test-only: the order of PT_STATE pause changes
         exit( CL_TestPauseOrder() ? 1 : 0 );
     if( M_CheckParm( "-testservertics" ) )  // test-only: the sections of a tic packet
         exit( CL_TestServerTics() ? 1 : 0 );

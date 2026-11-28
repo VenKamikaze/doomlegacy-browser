@@ -131,8 +131,8 @@
 
 #define MIN_READSAVE_VERSION  144
 #define MAX_READSAVE_VERSION  DL_VERSION
-// Portable savegames only: the version after F4, which saves every player's walking bob
-// (bob_momx, bob_momy: bugs.md L25, L53). A portable 149 savegame (F2, F3) has no bob and
+// Portable savegames only: the version which saves every player's walking bob
+// (bob_momx, bob_momy). A portable 149 savegame (F2, F3) has no bob and
 // still loads from a file, with the bob 0; a joining client refuses it, as the game it
 // would start differs from the server's.
 #define SG_BOB_VERSION  150
@@ -762,7 +762,7 @@ void P_ArchivePlayers(void)
         WRITEFIXED(save_p, ply->deltaviewheight);
         // The walking bob decides when a player's mobj leaves its running frames
         // (P_PlayerMobjThinker, "stop player walking sprite"): a joiner that starts it at 0
-        // stops a running player's frame at once (bugs.md L25, L53). Since SG_BOB_VERSION.
+        // stops a running player's frame at once. Since SG_BOB_VERSION.
         WRITEFIXED(save_p, ply->bob_momx);
         WRITEFIXED(save_p, ply->bob_momy);
 
@@ -1849,7 +1849,7 @@ enum
 // garbage in its flags and health, and put in the friends or enemies class-list, where
 // P_LookForMonsters (a friendly bot or dog looking for a target) walked it. Which machine got which
 // list depended on the heap: a game loaded from one savegame played on differently on native and on
-// wasm (found by tests/savegame-portable.sh, bots stage, when F4 moved the heap). Start from zeros.
+// wasm (found by tests/savegame-portable.sh, bots stage, when a later change moved the heap). Start from zeros.
 static void * SG_ThinkerAlloc( size_t size )
 {
     void * p = Z_Malloc( size, PU_LEVEL, NULL );
@@ -4818,7 +4818,7 @@ boolean P_Savegame_Read_header( savegame_info_t * infop, byte read_netgame )
     sg_portable = ( sg_version >= SG_PORTABLE_BASE );
     if( sg_portable )  sg_version -= SG_PORTABLE_BASE;
     if( sg_version < MIN_READSAVE_VERSION )  goto wrong;
-    // The portable layout is written with DL_VERSION (F2, F3) and SG_BOB_VERSION (F4).
+    // The portable layout is written with DL_VERSION and SG_BOB_VERSION.
     if( sg_version > ((sg_portable)? SG_BOB_VERSION : MAX_READSAVE_VERSION) )  goto wrong;
     // Nothing writes the portable layout with another version than these.
     if( sg_portable && sg_version != DL_VERSION && sg_version != SG_BOB_VERSION )  goto wrong;
@@ -4827,7 +4827,7 @@ boolean P_Savegame_Read_header( savegame_info_t * infop, byte read_netgame )
     // a game that is joined cannot know.
     if( read_netgame && ! sg_portable )  goto old_layout;
     // A joining client has no bob to start from in an older savegame: the joiner's players
-    // would differ from the server's as soon as one has been walking (L53). Refuse it,
+    // would differ from the server's as soon as one has been walking. Refuse it,
     // with the message of any other version.
     if( read_netgame && sg_version < SG_BOB_VERSION )  goto wrong;
     reason = "endian";

@@ -26,14 +26,14 @@
 //                         the host's own player slot.
 //   -testcmd TIC TEXT     (F3 fix round 1) at game tic TIC run the console command TEXT
 //                         (for example "map e1m4"); may be given several times
-//   -testwalk FROM TO     (F4) the local player (the first one) walks forward, running, with
+//   -testwalk FROM TO     the local player (the first one) walks forward, running, with
 //                         this machine's ticcmds built for game tics FROM to TO: a human
-//                         who is moving at the join (bugs.md L53), with no input device
+//                         who is moving at the join, with no input device
 //   -testcensus           print how many thinkers of each kind the level has,
 //                         each time one of the counts reaches a new maximum
 //   -testsizes            print the bytes one record of each sector effect takes
 //                         in a savegame, and quit
-//   -testimpair SPEC      (brief F4) make this machine's own outgoing datagrams lossy, in
+//   -testimpair SPEC      make this machine's own outgoing datagrams lossy, in
 //                         any network driver, with no root.  SPEC is a comma list of
 //                         loss=P, dup=P, reorder=P (percent of the datagrams) and seed=N.
 //                         A lost datagram is not sent, a duplicated one is sent twice, a
@@ -316,8 +316,8 @@ static uint32_t hash_players( void )
             F( momx, pl->mo->momx );  F( momy, pl->mo->momy );
             F( momz, pl->mo->momz );  F( angle, pl->mo->angle );
         }
-        // The walking bob (bob_momx, bob_momy) is hashed since F4: a savegame holds it (10150,
-        // bugs.md L25, L53) and it decides when a player's mobj leaves its running frames.
+        // The walking bob (bob_momx, bob_momy) is hashed now: a savegame holds it (10150)
+        // and it decides when a player's mobj leaves its running frames.
         // Not hashed: viewz, bob and the weapon sprite's sx and sy below: the view bobbing,
         // which nothing in the simulation reads. The weapon's state and tics are hashed, which
         // is what the bob can change.
@@ -1109,7 +1109,7 @@ int TestDump_UnpauseDelay( unsigned int now )
 
 
 // ---------------------------------------------------------------------------
-// -testimpair: an impaired send (brief F4).  HSendPacket calls TestImpair_Send in
+// -testimpair: an impaired send.  HSendPacket calls TestImpair_Send in
 // place of I_NetSend, for every datagram of a network game, resends included.
 
 #define IMPAIR_HELD  4
