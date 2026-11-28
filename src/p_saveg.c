@@ -1842,6 +1842,22 @@ enum
 
 #endif // smite
 
+// A thinker of a sector effect that is being loaded is put in the thinker lists (P_AddThinker)
+// before its function is set, and P_AddThinker classifies it by that function (P_UpdateClassThink:
+// "is it a mobj?"). In memory from Z_Malloc the function is what a freed block held, often a mobj's
+// function after the old level's mobjs were freed: the effect was then read as a mobj, with
+// garbage in its flags and health, and put in the friends or enemies class-list, where
+// P_LookForMonsters (a friendly bot or dog looking for a target) walked it. Which machine got which
+// list depended on the heap: a game loaded from one savegame played on differently on native and on
+// wasm (found by tests/savegame-portable.sh, bots stage, when F4 moved the heap). Start from zeros.
+static void * SG_ThinkerAlloc( size_t size )
+{
+    void * p = Z_Malloc( size, PU_LEVEL, NULL );
+    memset( p, 0, size );
+    return p;
+}
+
+
 
 // [WDJ] comment: This is fragile. It depends upon the struct definitions
 // of all the sector effects having the thinker_t links and sector ptr as
@@ -3120,7 +3136,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_ceiling:
               {
-                ceiling_t *ceiling = Z_Malloc(sizeof(*ceiling), PU_LEVEL, NULL);
+                ceiling_t *ceiling = SG_ThinkerAlloc(sizeof(*ceiling));
                 if( sg_portable )
                 {
                     READ_ceiling_fields( ceiling );
@@ -3139,7 +3155,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_door:
               {
-                vldoor_t *door = Z_Malloc(sizeof(*door), PU_LEVEL, NULL);
+                vldoor_t *door = SG_ThinkerAlloc(sizeof(*door));
                 if( sg_portable )
                 {
                     READ_door_fields( door );
@@ -3169,7 +3185,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_floor:
               {
-                floormove_t *floormv = Z_Malloc(sizeof(*floormv), PU_LEVEL, NULL);
+                floormove_t *floormv = SG_ThinkerAlloc(sizeof(*floormv));
                 if( sg_portable )
                 {
                     READ_floor_fields( floormv );
@@ -3186,7 +3202,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_plat:
               {
-                plat_t *plat = Z_Malloc(sizeof(*plat), PU_LEVEL, NULL);
+                plat_t *plat = SG_ThinkerAlloc(sizeof(*plat));
                 if( sg_portable )
                 {
                     READ_plat_fields( plat );
@@ -3223,7 +3239,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_flash:
               {
-                lightflash_t *flash = Z_Malloc(sizeof(*flash), PU_LEVEL, NULL);
+                lightflash_t *flash = SG_ThinkerAlloc(sizeof(*flash));
                 if( sg_portable )
                 {
                     READ_flash_fields( flash );
@@ -3252,7 +3268,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_strobe:
               {
-                strobe_t *strobe = Z_Malloc(sizeof(*strobe), PU_LEVEL, NULL);
+                strobe_t *strobe = SG_ThinkerAlloc(sizeof(*strobe));
                 if( sg_portable )
                 {
                     READ_strobe_fields( strobe );
@@ -3281,7 +3297,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_glow:
               {
-                glow_t *glow = Z_Malloc(sizeof(*glow), PU_LEVEL, NULL);
+                glow_t *glow = SG_ThinkerAlloc(sizeof(*glow));
                 if( sg_portable )
                 {
                     READ_glow_fields( glow );
@@ -3308,7 +3324,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_fireflicker:
               {
-                fireflicker_t *fireflicker = Z_Malloc(sizeof(*fireflicker), PU_LEVEL, NULL);
+                fireflicker_t *fireflicker = SG_ThinkerAlloc(sizeof(*fireflicker));
                 if( sg_portable )
                 {
                     READ_fireflicker_fields( fireflicker );
@@ -3335,7 +3351,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_lightfade:
               {
-                lightfader_t *fade = Z_Malloc(sizeof(*fade), PU_LEVEL, NULL);
+                lightfader_t *fade = SG_ThinkerAlloc(sizeof(*fade));
                 if( sg_portable )
                 {
                     READ_lightfade_fields( fade );
@@ -3361,7 +3377,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_elevator:
               {
-                elevator_t *elevator = Z_Malloc(sizeof(elevator_t), PU_LEVEL, NULL);
+                elevator_t *elevator = SG_ThinkerAlloc(sizeof(elevator_t));
                 if( sg_portable )
                 {
                     READ_elevator_fields( elevator );
@@ -3379,7 +3395,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_scroll:
               {
-                scroll_t *scroll = Z_Malloc(sizeof(scroll_t), PU_LEVEL, NULL);
+                scroll_t *scroll = SG_ThinkerAlloc(sizeof(scroll_t));
                 if( sg_portable )
                 {
                     READ_scroll_fields( scroll );
@@ -3397,7 +3413,7 @@ void P_UnArchiveThinkers(void)
               {
 #ifdef FRICTIONTHINKER
                  // friction thinkers are obsolete
-                friction_t *friction = Z_Malloc(sizeof(friction_t), PU_LEVEL, NULL);
+                friction_t *friction = SG_ThinkerAlloc(sizeof(friction_t));
                 if( sg_portable )
                 {
                     READ_friction_fields( friction );
@@ -3417,7 +3433,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_pusher:
               {
-                pusher_t *pusher = Z_Malloc(sizeof(pusher_t), PU_LEVEL, NULL);
+                pusher_t *pusher = SG_ThinkerAlloc(sizeof(pusher_t));
                 if( sg_portable )
                 {
                     READ_pusher_fields( pusher );
