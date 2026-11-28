@@ -30,6 +30,15 @@
 //                         each time one of the counts reaches a new maximum
 //   -testsizes            print the bytes one record of each sector effect takes
 //                         in a savegame, and quit
+//   -testimpair SPEC      (brief F4) make this machine's own outgoing datagrams lossy, in
+//                         any network driver, with no root.  SPEC is a comma list of
+//                         loss=P, dup=P, reorder=P (percent of the datagrams) and seed=N.
+//                         A lost datagram is not sent, a duplicated one is sent twice, a
+//                         reordered one is held back and sent after 1 to 3 later ones.
+//                         Off without the option.  The same seed rolls the same dice in
+//                         the same order, so which datagram each roll hits depends only on
+//                         how many this machine has sent.  The counts are printed when the
+//                         connection is closed: "TEST: impair: ...".
 //
 // Record (seven 32-bit little endian words):
 //   tic, total, random, players, mobjs, world, specials
@@ -61,6 +70,8 @@
 #include "d_think.h"
 #include "doomdata.h"
 #include "test_dump.h"
+#include "i_net.h"
+#include "d_net.h"
 #include "p_saveg.h"
 #include "d_main.h"
 #include "d_clisrv.h"
@@ -1090,4 +1101,137 @@ int TestDump_UnpauseDelay( unsigned int now )
     if( now < until )  return 1;
     until = 0;
     return 0;
+}
+
+
+// ---------------------------------------------------------------------------
+// -testimpair: an impaired send (brief F4).  HSendPacket calls TestImpair_Send in
+// place of I_NetSend, for every datagram of a network game, resends included.
+
+#define IMPAIR_HELD  4
+typedef struct
+{
+    int      wait;   // later datagrams to send before this one; 0 = slot free
+    int16_t  node;
+    uint16_t len;
+    char     data[MAXPACKETLENGTH];
+} impair_held_t;
+
+static int impair_on = 0, impair_loss = 0, impair_dup = 0, impair_reorder = 0;
+static uint32_t impair_rng = 1;
+static impair_held_t impair_held[IMPAIR_HELD];
+static unsigned long impair_n_sent = 0, impair_n_lost = 0, impair_n_dup = 0,
+                     impair_n_reordered = 0, impair_n_total = 0;
+
+static uint32_t impair_rand( void )  // xorshift32
+{
+    impair_rng ^= impair_rng << 13;
+    impair_rng ^= impair_rng >> 17;
+    impair_rng ^= impair_rng << 5;
+    return impair_rng;
+}
+
+static void impair_parse( const char * spec )
+{
+    char buf[128];
+    char * tok, * save = NULL;
+    unsigned long seed = 1;
+    strncpy( buf, spec, sizeof(buf) - 1 );
+    buf[sizeof(buf) - 1] = 0;
+    for( tok = strtok_r( buf, ",", &save ); tok; tok = strtok_r( NULL, ",", &save ) )
+    {
+        if( strncmp( tok, "loss=", 5 ) == 0 )         impair_loss = atoi( tok + 5 );
+        else if( strncmp( tok, "dup=", 4 ) == 0 )     impair_dup = atoi( tok + 4 );
+        else if( strncmp( tok, "reorder=", 8 ) == 0 ) impair_reorder = atoi( tok + 8 );
+        else if( strncmp( tok, "seed=", 5 ) == 0 )    seed = strtoul( tok + 5, NULL, 10 );
+        else  I_SoftError( "-testimpair: unknown item \"%s\"\n", tok );
+    }
+    // a well mixed non-zero state from any seed
+    impair_rng = (uint32_t)( seed * 2654435761u + 0x9E3779B9u );
+    if( impair_rng == 0 )  impair_rng = 1;
+    impair_on = ( impair_loss | impair_dup | impair_reorder ) != 0;
+    printf( "TEST: impair: loss %d%%, dup %d%%, reorder %d%%, seed %lu\n",
+            impair_loss, impair_dup, impair_reorder, seed );
+    fflush( stdout );
+}
+
+// One real send of the datagram now in doomcom.
+static byte impair_send_now( void )
+{
+    impair_n_sent++;
+    return I_NetSend();
+}
+
+byte TestImpair_Send( void )
+{
+    static int inited = 0;
+    byte err = NE_success, e2;
+    int i;
+
+    if( ! inited )
+    {
+        int p = M_CheckParm( "-testimpair" );
+        inited = 1;
+        if( p && M_IsNextParm() )  impair_parse( M_GetNextParm() );
+    }
+    if( ! impair_on )  return I_NetSend();
+
+    impair_n_total++;
+    if( (int)( impair_rand() % 100 ) < impair_loss )
+    {
+        impair_n_lost++;
+        return NE_success;  // "sent", never arrives
+    }
+    if( (int)( impair_rand() % 100 ) < impair_reorder )
+    {
+        for( i = 0; i < IMPAIR_HELD; i++ )
+        {
+            impair_held_t * h = &impair_held[i];
+            if( h->wait )  continue;
+            h->wait = 1 + (int)( impair_rand() % 3 );
+            h->node = doomcom->remotenode;
+            h->len = doomcom->datalength;
+            memcpy( h->data, doomcom->data, doomcom->datalength );
+            impair_n_reordered++;
+            return NE_success;  // sent later
+        }
+        // no free slot: send it in order
+    }
+    err = impair_send_now();
+    if( (int)( impair_rand() % 100 ) < impair_dup )
+    {
+        impair_n_dup++;
+        e2 = impair_send_now();
+        if( e2 > err )  err = e2;
+    }
+    // this datagram went out: the held ones are one closer to their turn
+    for( i = 0; i < IMPAIR_HELD; i++ )
+    {
+        impair_held_t * h = &impair_held[i];
+        if( ! h->wait || --h->wait )  continue;
+        {
+            // send it with doomcom holding it, then put back what was there
+            int16_t node = doomcom->remotenode;
+            uint16_t len = doomcom->datalength;
+            char save[MAXPACKETLENGTH];
+            memcpy( save, doomcom->data, len );
+            doomcom->remotenode = h->node;
+            doomcom->datalength = h->len;
+            memcpy( doomcom->data, h->data, h->len );
+            impair_send_now();
+            doomcom->remotenode = node;
+            doomcom->datalength = len;
+            memcpy( doomcom->data, save, len );
+        }
+    }
+    return err;
+}
+
+void TestImpair_Report( void )
+{
+    if( ! impair_on )  return;
+    printf( "TEST: impair: of %lu datagrams: lost %lu, duplicated %lu, reordered %lu; %lu sent\n",
+            impair_n_total, impair_n_lost, impair_n_dup, impair_n_reordered, impair_n_sent );
+    fflush( stdout );
+    impair_on = 0;  // once
 }

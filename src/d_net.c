@@ -71,6 +71,7 @@
 #include "m_swap.h"
 #include "z_zone.h"
 #include "i_web.h"
+#include "test_dump.h"
 
 //
 // NETWORKING
@@ -1642,7 +1643,7 @@ byte  HSendPacket(byte to_node, byte flags, byte acknum, int packetlength)
 #endif
 #endif
 
-    errcode = I_NetSend();   
+    errcode = TestImpair_Send();   // I_NetSend, or lossy with -testimpair
     if( errcode >= NE_fail )   goto ret_errcode;
     return NE_success;
 
@@ -2001,6 +2002,7 @@ extern void D_CloseConnection( void )
 
     if( netgame )
     {
+        TestImpair_Report();
         // wait the ack_return with timeout of 5 Sec
         Net_Wait_AllAckReceived(5);
 

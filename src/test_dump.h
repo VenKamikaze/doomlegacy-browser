@@ -29,6 +29,12 @@ int TestDump_UnpauseDelay( unsigned int now );
 // pointer for a live mobj; this count cannot.
 void TestDump_BotsAtLevelStart( void );
 
+// Test-only -testimpair SPEC (brief F4): HSendPacket sends through this in place of
+// I_NetSend. Without the option it is I_NetSend. Returns what I_NetSend returns.
+byte TestImpair_Send( void );
+// Print the counts ("TEST: impair: ..."); a no-op without the option.
+void TestImpair_Report( void );
+
 // True if -testdump is active.
 extern int  testdump_active;
 
