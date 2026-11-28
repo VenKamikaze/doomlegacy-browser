@@ -105,6 +105,7 @@ typedef enum {
     XD_ADDPLAYER,
     XD_ADDBOT,	//added by AC for acbot
     XD_USEARTIFACT,
+    XD_NETWAIT,   // the pause of a join in progress (d_clisrv.c)
     MAXNETXCMD
 } netxcmd_e;
 

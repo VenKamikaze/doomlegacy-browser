@@ -26,10 +26,22 @@
 //                         the host's own player slot.
 //   -testcmd TIC TEXT     (F3 fix round 1) at game tic TIC run the console command TEXT
 //                         (for example "map e1m4"); may be given several times
+//   -testwalk FROM TO     the local player (the first one) walks forward, running, with
+//                         this machine's ticcmds built for game tics FROM to TO: a human
+//                         who is moving at the join, with no input device
 //   -testcensus           print how many thinkers of each kind the level has,
 //                         each time one of the counts reaches a new maximum
 //   -testsizes            print the bytes one record of each sector effect takes
 //                         in a savegame, and quit
+//   -testimpair SPEC      make this machine's own outgoing datagrams lossy, in
+//                         any network driver, with no root.  SPEC is a comma list of
+//                         loss=P, dup=P, reorder=P (percent of the datagrams) and seed=N.
+//                         A lost datagram is not sent, a duplicated one is sent twice, a
+//                         reordered one is held back and sent after 1 to 3 later ones.
+//                         Off without the option.  The same seed rolls the same dice in
+//                         the same order, so which datagram each roll hits depends only on
+//                         how many this machine has sent.  The counts are printed when the
+//                         connection is closed: "TEST: impair: ...".
 //
 // Record (seven 32-bit little endian words):
 //   tic, total, random, players, mobjs, world, specials
@@ -61,6 +73,8 @@
 #include "d_think.h"
 #include "doomdata.h"
 #include "test_dump.h"
+#include "i_net.h"
+#include "d_net.h"
 #include "p_saveg.h"
 #include "d_main.h"
 #include "d_clisrv.h"
@@ -302,11 +316,12 @@ static uint32_t hash_players( void )
             F( momx, pl->mo->momx );  F( momy, pl->mo->momy );
             F( momz, pl->mo->momz );  F( angle, pl->mo->angle );
         }
-        // Not hashed: viewz, bob, bob_momx and bob_momy (and the weapon sprite's
-        // sx and sy below). They are the view bobbing: a savegame does not hold
-        // them, so a player that joined by savegame has them differ for a while
-        // (they decay with friction), and nothing in the game reads them. The
-        // weapon's state and tics are hashed, which is what the bob can change.
+        // The walking bob (bob_momx, bob_momy) is hashed now: a savegame holds it (10150)
+        // and it decides when a player's mobj leaves its running frames.
+        // Not hashed: viewz, bob and the weapon sprite's sx and sy below: the view bobbing,
+        // which nothing in the simulation reads. The weapon's state and tics are hashed, which
+        // is what the bob can change.
+        F( bobx, pl->bob_momx );  F( boby, pl->bob_momy );
         F( viewheight, pl->viewheight );
         F( deltaviewheight, pl->deltaviewheight );
         F( aiming, pl->aiming );
@@ -360,13 +375,6 @@ static uint32_t hash_players( void )
         line_begin( "botglobals %d", 0 );
         F( oksector, sector_num( oksector ) );
         F( grid, B_Grid_Hash() );   // every machine must have built the same node grid
-        // The players' walking bob, which a savegame holds when there are bots (bugs.md
-        // L25, L53): it decides when a player's mobj leaves its running frames.
-        for( j = 0; j < MAXPLAYERS; j++ )
-        {
-            if( ! playeringame[j] )  continue;
-            F( bobx, players[j].bob_momx );  F( boby, players[j].bob_momy );
-        }
         if( B_Get_speed_state( &frac, &tics ) )
         {
             F( speedfrac, frac );  F( runtics, tics );
@@ -675,6 +683,7 @@ static const char *  testload_file = NULL;
 static int  options_read = 0;
 static int  census_on = 0;
 #define MAX_TESTCMD  8
+static tic_t  testwalk_from = 0, testwalk_to = 0;
 static struct { tic_t tic; const char * text; } testcmd[MAX_TESTCMD];
 static int  num_testcmd = 0;
 static tic_t  addbots_tic = 0;
@@ -698,6 +707,12 @@ static void read_options( void )
     if( i && M_IsNextParm() )  testquit_tic = (tic_t) atoi( M_GetNextParm() );
     i = M_CheckParm( "-testload" );
     if( i && M_IsNextParm() )  testload_file = M_GetNextParm();
+    i = M_CheckParm( "-testwalk" );
+    if( i && i + 2 < myargc )
+    {
+        testwalk_from = (tic_t) atoi( myargv[i + 1] );
+        testwalk_to = (tic_t) atoi( myargv[i + 2] );
+    }
     census_on = M_CheckParm( "-testcensus" );
     for( i = 1; i + 2 < myargc && num_testcmd < MAX_TESTCMD; i++ )
     {
@@ -1090,4 +1105,145 @@ int TestDump_UnpauseDelay( unsigned int now )
     if( now < until )  return 1;
     until = 0;
     return 0;
+}
+
+
+// ---------------------------------------------------------------------------
+// -testimpair: an impaired send.  HSendPacket calls TestImpair_Send in
+// place of I_NetSend, for every datagram of a network game, resends included.
+
+#define IMPAIR_HELD  4
+typedef struct
+{
+    int      wait;   // later datagrams to send before this one; 0 = slot free
+    int16_t  node;
+    uint16_t len;
+    char     data[MAXPACKETLENGTH];
+} impair_held_t;
+
+static int impair_on = 0, impair_loss = 0, impair_dup = 0, impair_reorder = 0;
+static uint32_t impair_rng = 1;
+static impair_held_t impair_held[IMPAIR_HELD];
+static unsigned long impair_n_sent = 0, impair_n_lost = 0, impair_n_dup = 0,
+                     impair_n_reordered = 0, impair_n_total = 0;
+
+static uint32_t impair_rand( void )  // xorshift32
+{
+    impair_rng ^= impair_rng << 13;
+    impair_rng ^= impair_rng >> 17;
+    impair_rng ^= impair_rng << 5;
+    return impair_rng;
+}
+
+static void impair_parse( const char * spec )
+{
+    char buf[128];
+    char * tok, * save = NULL;
+    unsigned long seed = 1;
+    strncpy( buf, spec, sizeof(buf) - 1 );
+    buf[sizeof(buf) - 1] = 0;
+    for( tok = strtok_r( buf, ",", &save ); tok; tok = strtok_r( NULL, ",", &save ) )
+    {
+        if( strncmp( tok, "loss=", 5 ) == 0 )         impair_loss = atoi( tok + 5 );
+        else if( strncmp( tok, "dup=", 4 ) == 0 )     impair_dup = atoi( tok + 4 );
+        else if( strncmp( tok, "reorder=", 8 ) == 0 ) impair_reorder = atoi( tok + 8 );
+        else if( strncmp( tok, "seed=", 5 ) == 0 )    seed = strtoul( tok + 5, NULL, 10 );
+        else  I_SoftError( "-testimpair: unknown item \"%s\"\n", tok );
+    }
+    // a well mixed non-zero state from any seed
+    impair_rng = (uint32_t)( seed * 2654435761u + 0x9E3779B9u );
+    if( impair_rng == 0 )  impair_rng = 1;
+    impair_on = ( impair_loss | impair_dup | impair_reorder ) != 0;
+    printf( "TEST: impair: loss %d%%, dup %d%%, reorder %d%%, seed %lu\n",
+            impair_loss, impair_dup, impair_reorder, seed );
+    fflush( stdout );
+}
+
+// One real send of the datagram now in doomcom.
+static byte impair_send_now( void )
+{
+    impair_n_sent++;
+    return I_NetSend();
+}
+
+byte TestImpair_Send( void )
+{
+    static int inited = 0;
+    byte err = NE_success, e2;
+    int i;
+
+    if( ! inited )
+    {
+        int p = M_CheckParm( "-testimpair" );
+        inited = 1;
+        if( p && M_IsNextParm() )  impair_parse( M_GetNextParm() );
+    }
+    if( ! impair_on )  return I_NetSend();
+
+    impair_n_total++;
+    if( (int)( impair_rand() % 100 ) < impair_loss )
+    {
+        impair_n_lost++;
+        return NE_success;  // "sent", never arrives
+    }
+    if( (int)( impair_rand() % 100 ) < impair_reorder )
+    {
+        for( i = 0; i < IMPAIR_HELD; i++ )
+        {
+            impair_held_t * h = &impair_held[i];
+            if( h->wait )  continue;
+            h->wait = 1 + (int)( impair_rand() % 3 );
+            h->node = doomcom->remotenode;
+            h->len = doomcom->datalength;
+            memcpy( h->data, doomcom->data, doomcom->datalength );
+            impair_n_reordered++;
+            return NE_success;  // sent later
+        }
+        // no free slot: send it in order
+    }
+    err = impair_send_now();
+    if( (int)( impair_rand() % 100 ) < impair_dup )
+    {
+        impair_n_dup++;
+        e2 = impair_send_now();
+        if( e2 > err )  err = e2;
+    }
+    // this datagram went out: the held ones are one closer to their turn
+    for( i = 0; i < IMPAIR_HELD; i++ )
+    {
+        impair_held_t * h = &impair_held[i];
+        if( ! h->wait || --h->wait )  continue;
+        {
+            // send it with doomcom holding it, then put back what was there
+            int16_t node = doomcom->remotenode;
+            uint16_t len = doomcom->datalength;
+            char save[MAXPACKETLENGTH];
+            memcpy( save, doomcom->data, len );
+            doomcom->remotenode = h->node;
+            doomcom->datalength = h->len;
+            memcpy( doomcom->data, h->data, h->len );
+            impair_send_now();
+            doomcom->remotenode = node;
+            doomcom->datalength = len;
+            memcpy( doomcom->data, save, len );
+        }
+    }
+    return err;
+}
+
+void TestImpair_Report( void )
+{
+    if( ! impair_on )  return;
+    printf( "TEST: impair: of %lu datagrams: lost %lu, duplicated %lu, reordered %lu; %lu sent\n",
+            impair_n_total, impair_n_lost, impair_n_dup, impair_n_reordered, impair_n_sent );
+    fflush( stdout );
+    impair_on = 0;  // once
+}
+
+// -testwalk: called at the end of G_BuildTiccmd for the local player.
+void TestDump_Walk( ticcmd_t * cmd, int which_player )
+{
+    if( testwalk_to == 0 || which_player != 0 )  return;
+    if( gametic < testwalk_from || gametic >= testwalk_to )  return;
+    cmd->forwardmove = 50;  // running speed
 }

@@ -17,8 +17,9 @@ void TestDump_Init( void );
 void TestDump_Tic( void );
 
 // Test-only -testunpausedelay N (server): after the clients are ready, the server's
-// network wait pause lasts N more gametics, so that its unpause names a later gametic
-// than a joining client has reached (the race of bugs.md L21). Returns true while
+// network wait pause lasts N more gametics (it made the race, an unpause for a
+// later gametic than a joining client had reached, before the pause went in the tic stream,
+// now it only makes the pause last). Returns true while
 // it should still wait. Always false without the option.
 int TestDump_UnpauseDelay( unsigned int now );
 
@@ -28,6 +29,17 @@ int TestDump_UnpauseDelay( unsigned int now );
 // that the old level freed is reused by the new one, so the state hash can take a stale
 // pointer for a live mobj; this count cannot.
 void TestDump_BotsAtLevelStart( void );
+
+// Test-only -testimpair SPEC: HSendPacket sends through this in place of
+// I_NetSend. Without the option it is I_NetSend. Returns what I_NetSend returns.
+byte TestImpair_Send( void );
+// Print the counts ("TEST: impair: ..."); a no-op without the option.
+void TestImpair_Report( void );
+
+// Test-only -testwalk FROM TO: makes the local player's ticcmd walk forward for
+// game tics FROM..TO-1. Called by G_BuildTiccmd; nothing without the option.
+#include "d_ticcmd.h"
+void TestDump_Walk( ticcmd_t * cmd, int which_player );
 
 // True if -testdump is active.
 extern int  testdump_active;

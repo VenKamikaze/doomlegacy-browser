@@ -131,6 +131,11 @@
 
 #define MIN_READSAVE_VERSION  144
 #define MAX_READSAVE_VERSION  DL_VERSION
+// Portable savegames only: the version which saves every player's walking bob
+// (bob_momx, bob_momy). A portable 149 savegame (F2, F3) has no bob and
+// still loads from a file, with the bob 0; a joining client refuses it, as the game it
+// would start differs from the server's.
+#define SG_BOB_VERSION  150
 
 // The portable layout of the sector effects.  Savegame versions 144 to 149
 // write them as raw memory, which differs between a 64-bit and a 32-bit
@@ -755,6 +760,11 @@ void P_ArchivePlayers(void)
         // Portable layout: the view height is not always the default, after a fall.
         WRITEFIXED(save_p, ply->viewheight);
         WRITEFIXED(save_p, ply->deltaviewheight);
+        // The walking bob decides when a player's mobj leaves its running frames
+        // (P_PlayerMobjThinker, "stop player walking sprite"): a joiner that starts it at 0
+        // stops a running player's frame at once. Since SG_BOB_VERSION.
+        WRITEFIXED(save_p, ply->bob_momx);
+        WRITEFIXED(save_p, ply->bob_momy);
 
         SG_Writebuf();
     }
@@ -900,6 +910,17 @@ void P_UnArchivePlayers(void)
         {
             ply->viewheight = READFIXED(save_p);
             ply->deltaviewheight = READFIXED(save_p);
+            if( sg_version >= SG_BOB_VERSION )
+            {
+                ply->bob_momx = READFIXED(save_p);
+                ply->bob_momy = READFIXED(save_p);
+            }
+            else
+            {
+                // an older savegame does not have it: the bob starts at 0, as it did
+                ply->bob_momx = 0;
+                ply->bob_momy = 0;
+            }
         }
         else
             ply->viewheight = cv_viewheight.value << FRACBITS;
@@ -1820,6 +1841,22 @@ enum
 #define READ_THINKER(th) {  READMEM(save_p, ((byte *)(th))+sizeof(thinker_t), sizeof(*th)-sizeof(thinker_t)); P_AddThinker(&(th)->thinker); }
 
 #endif // smite
+
+// A thinker of a sector effect that is being loaded is put in the thinker lists (P_AddThinker)
+// before its function is set, and P_AddThinker classifies it by that function (P_UpdateClassThink:
+// "is it a mobj?"). In memory from Z_Malloc the function is what a freed block held, often a mobj's
+// function after the old level's mobjs were freed: the effect was then read as a mobj, with
+// garbage in its flags and health, and put in the friends or enemies class-list, where
+// P_LookForMonsters (a friendly bot or dog looking for a target) walked it. Which machine got which
+// list depended on the heap: a game loaded from one savegame played on differently on native and on
+// wasm (found by tests/savegame-portable.sh, bots stage, when a later change moved the heap). Start from zeros.
+static void * SG_ThinkerAlloc( size_t size )
+{
+    void * p = Z_Malloc( size, PU_LEVEL, NULL );
+    memset( p, 0, size );
+    return p;
+}
+
 
 
 // [WDJ] comment: This is fragile. It depends upon the struct definitions
@@ -3099,7 +3136,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_ceiling:
               {
-                ceiling_t *ceiling = Z_Malloc(sizeof(*ceiling), PU_LEVEL, NULL);
+                ceiling_t *ceiling = SG_ThinkerAlloc(sizeof(*ceiling));
                 if( sg_portable )
                 {
                     READ_ceiling_fields( ceiling );
@@ -3118,7 +3155,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_door:
               {
-                vldoor_t *door = Z_Malloc(sizeof(*door), PU_LEVEL, NULL);
+                vldoor_t *door = SG_ThinkerAlloc(sizeof(*door));
                 if( sg_portable )
                 {
                     READ_door_fields( door );
@@ -3148,7 +3185,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_floor:
               {
-                floormove_t *floormv = Z_Malloc(sizeof(*floormv), PU_LEVEL, NULL);
+                floormove_t *floormv = SG_ThinkerAlloc(sizeof(*floormv));
                 if( sg_portable )
                 {
                     READ_floor_fields( floormv );
@@ -3165,7 +3202,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_plat:
               {
-                plat_t *plat = Z_Malloc(sizeof(*plat), PU_LEVEL, NULL);
+                plat_t *plat = SG_ThinkerAlloc(sizeof(*plat));
                 if( sg_portable )
                 {
                     READ_plat_fields( plat );
@@ -3202,7 +3239,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_flash:
               {
-                lightflash_t *flash = Z_Malloc(sizeof(*flash), PU_LEVEL, NULL);
+                lightflash_t *flash = SG_ThinkerAlloc(sizeof(*flash));
                 if( sg_portable )
                 {
                     READ_flash_fields( flash );
@@ -3231,7 +3268,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_strobe:
               {
-                strobe_t *strobe = Z_Malloc(sizeof(*strobe), PU_LEVEL, NULL);
+                strobe_t *strobe = SG_ThinkerAlloc(sizeof(*strobe));
                 if( sg_portable )
                 {
                     READ_strobe_fields( strobe );
@@ -3260,7 +3297,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_glow:
               {
-                glow_t *glow = Z_Malloc(sizeof(*glow), PU_LEVEL, NULL);
+                glow_t *glow = SG_ThinkerAlloc(sizeof(*glow));
                 if( sg_portable )
                 {
                     READ_glow_fields( glow );
@@ -3287,7 +3324,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_fireflicker:
               {
-                fireflicker_t *fireflicker = Z_Malloc(sizeof(*fireflicker), PU_LEVEL, NULL);
+                fireflicker_t *fireflicker = SG_ThinkerAlloc(sizeof(*fireflicker));
                 if( sg_portable )
                 {
                     READ_fireflicker_fields( fireflicker );
@@ -3314,7 +3351,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_lightfade:
               {
-                lightfader_t *fade = Z_Malloc(sizeof(*fade), PU_LEVEL, NULL);
+                lightfader_t *fade = SG_ThinkerAlloc(sizeof(*fade));
                 if( sg_portable )
                 {
                     READ_lightfade_fields( fade );
@@ -3340,7 +3377,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_elevator:
               {
-                elevator_t *elevator = Z_Malloc(sizeof(elevator_t), PU_LEVEL, NULL);
+                elevator_t *elevator = SG_ThinkerAlloc(sizeof(elevator_t));
                 if( sg_portable )
                 {
                     READ_elevator_fields( elevator );
@@ -3358,7 +3395,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_scroll:
               {
-                scroll_t *scroll = Z_Malloc(sizeof(scroll_t), PU_LEVEL, NULL);
+                scroll_t *scroll = SG_ThinkerAlloc(sizeof(scroll_t));
                 if( sg_portable )
                 {
                     READ_scroll_fields( scroll );
@@ -3376,7 +3413,7 @@ void P_UnArchiveThinkers(void)
               {
 #ifdef FRICTIONTHINKER
                  // friction thinkers are obsolete
-                friction_t *friction = Z_Malloc(sizeof(friction_t), PU_LEVEL, NULL);
+                friction_t *friction = SG_ThinkerAlloc(sizeof(friction_t));
                 if( sg_portable )
                 {
                     READ_friction_fields( friction );
@@ -3396,7 +3433,7 @@ void P_UnArchiveThinkers(void)
 
             case tc_pusher:
               {
-                pusher_t *pusher = Z_Malloc(sizeof(pusher_t), PU_LEVEL, NULL);
+                pusher_t *pusher = SG_ThinkerAlloc(sizeof(pusher_t));
                 if( sg_portable )
                 {
                     READ_pusher_fields( pusher );
@@ -4194,12 +4231,9 @@ void P_Archive_Bots()
 // that does not know it stops at the sync byte instead of misreading the bots.
 // The path and the destination are grid coordinates, not pointers.
 //   oksector (32, a sector index or 0xFFFFFFFF)
-//   the walking bob of every player in the game: count (8), then per player the number (8),
-//            bob_momx and bob_momy (32 each).  Not a bot's state, but it decides when a
-//            player's mobj leaves its running frames (P_PlayerMobjThinker, "stop player
-//            walking sprite", p_mobj.c:480): a joiner that starts it at 0 stops a bot's
-//            running frame at once, and the server's mobj, whose bob is still running down,
-//            keeps it (bugs.md L25, L53).  Only here, so a game without bots is the same bytes.
+//   (savegame 10149 only: the walking bob of every player in the game, count (8), then per
+//            player the number (8), bob_momx and bob_momy (32 each). It is in the players'
+//            records since 10150, for every game; this section has it no more.)
 //   per bot: player (8), blockedcount, avoidtimer, strafetimer,
 //            weaponchangetimer, runtimer, lastMobjX, lastMobjY (32 each),
 //            destNode x and y (32 each, both 0xFFFFFFFF for none),
@@ -4217,17 +4251,8 @@ void P_Archive_Botstate()
     SearchNode_t * node;
 
     WRITE32(save_p, oksector? (oksector - sectors) : BOTSTATE_NONE);
-    n = 0;
-    for (i = 0; i < MAXPLAYERS; i++)
-        if (playeringame[i])  n++;
-    WRITEBYTE(save_p, n);
-    for (i = 0; i < MAXPLAYERS; i++)
-    {
-        if (!playeringame[i])  continue;
-        WRITEBYTE(save_p, i);
-        WRITE32(save_p, players[i].bob_momx);
-        WRITE32(save_p, players[i].bob_momy);
-    }
+    // (The walking bob is in the players' records since SG_BOB_VERSION; the F3 section
+    // had it here, for the games with bots.)
     SG_Writebuf();
     for (i = 0; i < MAXPLAYERS; i++)
     {
@@ -4387,17 +4412,20 @@ void P_UnArchive_Botstate()
     else
         goto bad_data;
 
-    // the walking bob of the players
-    n = READBYTE(save_p);
-    if( ! SG_have( (size_t)n * 9 + 1 ) )  goto bad_data;
-    for( k = 0; k < n; k++ )
+    if( sg_version < SG_BOB_VERSION )
     {
-        pn = READBYTE(save_p);
-        x = READ32(save_p);
-        y = READ32(save_p);
-        if( (pn >= MAXPLAYERS) || !playeringame[pn] )  goto bad_data;
-        players[pn].bob_momx = x;
-        players[pn].bob_momy = y;
+        // the walking bob of the players, in the section of a savegame of F3
+        n = READBYTE(save_p);
+        if( ! SG_have( (size_t)n * 9 + 1 ) )  goto bad_data;
+        for( k = 0; k < n; k++ )
+        {
+            pn = READBYTE(save_p);
+            x = READ32(save_p);
+            y = READ32(save_p);
+            if( (pn >= MAXPLAYERS) || !playeringame[pn] )  goto bad_data;
+            players[pn].bob_momx = x;
+            players[pn].bob_momy = y;
+        }
     }
 
     while( (pn = READBYTE(save_p)) != BOTSTATE_END )
@@ -4498,6 +4526,9 @@ void P_ArchiveMisc()
     rand1 = E_Rand_Get( & rand2 );
     WRITEU32(save_p, rand1);
     WRITEU32(save_p, rand2);
+    // The pause state, for a client that joins while the game is paused (the network wait of
+    // another join, a player's pause): it only gets the commands that change it, not the state.
+    WRITEBYTE(save_p, paused);
 
     SG_Writebuf();
 }
@@ -4535,6 +4566,12 @@ boolean P_UnArchiveMisc()
         uint32_t rand1 = READU32(save_p); // cannot trust compiler to keep order
         uint32_t rand2 = READU32(save_p);
         E_Rand_Set( rand1, rand2 );
+    }
+    if( sg_version >= SG_BOB_VERSION )
+    {
+        byte pz = READBYTE(save_p);
+        // A joining client starts as paused as the game it joins; a savegame file does not pause the game.
+        if( sg_net_load )  paused = pz;
     }
 
     return true;
@@ -4692,7 +4729,7 @@ void P_Savegame_Write_header( const char * description, byte write_netgame )
 
     // binary header data
     // 16 bit game version that wrote file
-    WRITE16( save_p, SG_PORTABLE_BASE + DL_VERSION );  // savegame version
+    WRITE16( save_p, SG_PORTABLE_BASE + SG_BOB_VERSION );  // savegame version
     WRITEBYTE( save_p, sg_big_endian );
     WRITEBYTE( save_p, sg_padded );
     WRITEBYTE( save_p, sizeof(int) );	// word size
@@ -4781,13 +4818,18 @@ boolean P_Savegame_Read_header( savegame_info_t * infop, byte read_netgame )
     sg_portable = ( sg_version >= SG_PORTABLE_BASE );
     if( sg_portable )  sg_version -= SG_PORTABLE_BASE;
     if( sg_version < MIN_READSAVE_VERSION )  goto wrong;
-    if( sg_version > MAX_READSAVE_VERSION )  goto wrong;
-    // Nothing writes the portable layout with another version than this one.
-    if( sg_portable && sg_version != DL_VERSION )  goto wrong;
+    // The portable layout is written with DL_VERSION and SG_BOB_VERSION.
+    if( sg_version > ((sg_portable)? SG_BOB_VERSION : MAX_READSAVE_VERSION) )  goto wrong;
+    // Nothing writes the portable layout with another version than these.
+    if( sg_portable && sg_version != DL_VERSION && sg_version != SG_BOB_VERSION )  goto wrong;
     // A savegame of the old layout holds raw memory of the machine that
     // wrote it. It can only be read by the same kind of machine, which
     // a game that is joined cannot know.
     if( read_netgame && ! sg_portable )  goto old_layout;
+    // A joining client has no bob to start from in an older savegame: the joiner's players
+    // would differ from the server's as soon as one has been walking. Refuse it,
+    // with the message of any other version.
+    if( read_netgame && sg_version < SG_BOB_VERSION )  goto wrong;
     reason = "endian";
     if( READBYTE( save_p ) != sg_big_endian )  goto wrong;
     reason = "padding";

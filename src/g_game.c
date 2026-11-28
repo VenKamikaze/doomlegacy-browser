@@ -1395,6 +1395,7 @@ void G_BuildTiccmd(ticcmd_t* cmd, int realtics, byte pind)
 
  done:
     memset(gamekeytapped, 0, sizeof(gamekeytapped)); // we're done, reset key-tapping status
+    TestDump_Walk( cmd, pind );  // test-only (-testwalk), nothing without it
 #ifdef TICCMD_148
     cmd->ticflags |= TC_received;
 #endif

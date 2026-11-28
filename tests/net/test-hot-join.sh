@@ -12,6 +12,13 @@
 #   tests/net/test-hot-join.sh --state N       # also write the text state (-teststate N) of tic N on both machines
 #   tests/net/test-hot-join.sh --join-after N  # seconds of play before the client starts (default 10)
 #   tests/net/test-hot-join.sh --play N        # seconds of game time to compare after the join (default 40)
+#   tests/net/test-hot-join.sh --walk FROM TO  # the host's player walks (runs forward) for game tics FROM..TO (-testwalk): a human
+#                                              # who is moving at the join (bugs.md L53). Try 330 400: the join is at about tic 360
+#   tests/net/test-hot-join.sh --lossy SPEC    # make both machines' datagrams lossy (-testimpair SPEC, no root), e.g.
+#                                              # loss=3,dup=2,reorder=3; the server's seed is --seed, the client's --seed + 1
+#   tests/net/test-hot-join.sh --seed N        # the seed of the impairment (default 1); the same seed rolls the same dice in the same order, but which datagram each roll hits depends on timing: a seed does not replay a failure
+#   tests/net/test-hot-join.sh --runs N        # N runs, seeds --seed .. --seed + N - 1; "k of N passed"; exit 1 unless all
+#                                              # passed. With --keep DIR each run keeps its files in DIR/run-SEED
 #
 # The server runs Freedoom 1 E1M1 headless (dummy video, no sound) with the level's monsters
 # (and two bots with --bots), and writes a -testdump file. After --join-after seconds
@@ -22,9 +29,9 @@
 # Pass when:
 #   - both instances were still running when the script stopped them;
 #   - the client's file starts at the join tic and holds at least --play seconds of tics;
-#   - the join race is forced (the server keeps its pause 5 tics longer, -testunpausedelay 5, so the
-#     unpause it announces names a later tic than the client has reached) and the client log shows the
-#     pending pause applied at the server's tic ("TEST: pause N applied at gametic ...");
+#   - the join's pause is long enough to see (the server keeps it 5 tics longer, -testunpausedelay 5) and
+#     the client log shows the pause and the unpause executed in the tic stream, as the server did
+#     ("TEST: pause 64 applied at gametic ..." and "TEST: pause 0 applied at gametic ...", both required);
 #   - every tic that both files have is identical (tests/tools/testdump-diff.py --common);
 #   - the server kept running the whole time (its last tic is within 5 of the client's);
 #   - the game was not idle: the client's files shows the P_Random index moving (monsters
@@ -45,6 +52,11 @@ keep=""
 bots=()
 force=1
 state=()
+lossy=""
+walk=()
+seed=1
+runs=1
+args=("$@")
 while [ $# -gt 0 ]; do
     case "$1" in
         --bin) bin="${2:?}"; shift 2 ;;
@@ -55,6 +67,10 @@ while [ $# -gt 0 ]; do
         --state) state=(-teststate ${2:?}); shift 2 ;;  # "N" or "FROM TO"
         --join-after) join_after="${2:?}"; shift 2 ;;
         --play) play="${2:?}"; shift 2 ;;
+        --walk) walk=(-testwalk ${2:?} ${3:?}); shift 3 ;;
+        --lossy) lossy="${2:?}"; shift 2 ;;
+        --seed) seed="${2:?}"; shift 2 ;;
+        --runs) runs="${2:?}"; shift 2 ;;
         -h|--help) sed -n '2,/^set -uo/p' "${BASH_SOURCE[0]}" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
@@ -62,6 +78,32 @@ done
 [ -x "$bin" ] || { echo "no game binary at $bin (scripts/build-native.sh)" >&2; exit 2; }
 [ -f "$iwad" ] || { echo "no $iwad (scripts/fetch-test-data.sh)" >&2; exit 2; }
 bin="$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")"
+
+if [ "$runs" -gt 1 ]; then
+    # N runs of this script, one seed each; strip --runs, --seed and --keep from the arguments
+    rest=(); i=0
+    while [ $i -lt ${#args[@]} ]; do
+        case "${args[$i]}" in
+            --runs|--seed|--keep) i=$((i + 2)) ;;
+            *) rest+=("${args[$i]}"); i=$((i + 1)) ;;
+        esac
+    done
+    passed=0; failed_seeds=""; start=$SECONDS
+    for n in $(seq 0 $((runs - 1))); do
+        s=$((seed + n)); k=()
+        [ -n "$keep" ] && k=(--keep "$keep/run-$s")
+        echo "== run $((n + 1)) of $runs, seed $s"
+        if "${BASH_SOURCE[0]}" "${rest[@]}" --seed "$s" "${k[@]}" > "${TMPDIR:-/tmp}/hot-join-run.$$.txt" 2>&1; then
+            passed=$((passed + 1)); echo "  PASS"
+        else
+            failed_seeds="$failed_seeds $s"; echo "  FAIL"
+            grep -E "FAIL|compare:|impair" "${TMPDIR:-/tmp}/hot-join-run.$$.txt" | head -8 | sed 's/^/    /'
+        fi
+    done
+    rm -f "${TMPDIR:-/tmp}/hot-join-run.$$.txt"
+    echo "hot-join: $passed of $runs passed ($((SECONDS - start)) s)${failed_seeds:+; failed seeds:$failed_seeds}"
+    [ "$passed" = "$runs" ]; exit $?
+fi
 
 if [ -n "$keep" ]; then mkdir -p "$keep"; work="$(cd "$keep" && pwd)"; else
     work="$(mktemp -d "${TMPDIR:-/tmp}/hot-join.XXXXXX")"; fi
@@ -79,6 +121,8 @@ export SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
 # With a sanitizer build (tests/asan-demos.sh builds one) reports must not stop the game.
 export ASAN_OPTIONS="${ASAN_OPTIONS:-halt_on_error=0:detect_leaks=0}"
 common=(-iwad "$iwad" -nosound -nomusic -noendtext -skill 3)
+imp_s=(); imp_c=()
+if [ -n "$lossy" ]; then imp_s=(-testimpair "$lossy,seed=$seed"); imp_c=(-testimpair "$lossy,seed=$((seed + 1))"); fi
 
 tics() { # number of records in a dump
     [ -f "$1" ] && echo $(( $(stat -c %s "$1") / 28 )) || echo 0
@@ -92,7 +136,7 @@ check() { # check "name" status
 # game; -server 2 waits for a second player node. Bots give the game something to do.
 if [ "$together" = 1 ]; then nodes=2; else nodes=1; fi
 ( cd "$work/s" && exec "$bin" -home "$work/s" "${common[@]}" -server "$nodes" -udpport "$port_s" \
-    -warp 1 1 "${unpause[@]}" -testdump s.bin "${state[@]}" "${bots[@]}" > out.txt 2>&1 ) &
+    -warp 1 1 "${unpause[@]}" "${imp_s[@]}" "${walk[@]}" -testdump s.bin "${state[@]}" "${bots[@]}" > out.txt 2>&1 ) &
 spid=$!; pids+=("$spid")
 echo "server: pid $spid, port $port_s"
 
@@ -110,7 +154,7 @@ fi
 join_server_tic="$(tics "$work/s/s.bin")"
 echo "client joins at server tic about $join_server_tic"
 ( cd "$work/c" && exec "$bin" -home "$work/c" "${common[@]}" -connect 127.0.0.1 -udpport "$port_s" \
-    -clientport "$port_c" -testdump c.bin "${state[@]}" > out.txt 2>&1 ) &
+    -clientport "$port_c" "${imp_c[@]}" -testdump c.bin "${state[@]}" > out.txt 2>&1 ) &
 cpid=$!; pids+=("$cpid")
 
 # wait until the client has played $play seconds of tics, up to a limit
@@ -125,31 +169,36 @@ sleep 1
 s_alive=1; c_alive=1
 kill -0 "$spid" 2>/dev/null || s_alive=0
 kill -0 "$cpid" 2>/dev/null || c_alive=0
+# The files as they are while both games run: a game that is told to quit takes one more record after
+# it has left the level (the title screen: its three world words are 0), which is not game state.
+cp "$work/c/c.bin" "$work/c/c.run" 2>/dev/null; cp "$work/s/s.bin" "$work/s/s.run" 2>/dev/null
 for p in "$cpid" "$spid"; do kill -TERM "$p" 2>/dev/null; done
 sleep 2
 for p in "$cpid" "$spid"; do kill -KILL "$p" 2>/dev/null; done
 wait 2>/dev/null
 
-sn="$(tics "$work/s/s.bin")"; cn="$(tics "$work/c/c.bin")"
+sn="$(tics "$work/s/s.run")"; cn="$(tics "$work/c/c.run")"
 echo "server file: $sn records; client file: $cn records"
 check "the server was still running at the end" $((1 - s_alive))
 check "the client was still running at the end" $((1 - c_alive))
 if [ "$together" = 0 ] && [ "$force" = 1 ]; then
-    check "the client applied a pending pause change at the server's tic (the race of L21 was forced)" \
-        $(grep -q "TEST: pause [0-9]* applied at gametic" "$work/c/out.txt" && echo 0 || echo 1)
+    check "the client executed the join's pause in the tic stream (kept 5 tics longer by -testunpausedelay)" \
+        $(grep -q "TEST: pause [1-9][0-9]* applied at gametic" "$work/c/out.txt" && echo 0 || echo 1)
+    check "the client executed its end, the unpause, in the tic stream" \
+        $(grep -q "TEST: pause 0 applied at gametic" "$work/c/out.txt" && echo 0 || echo 1)
 fi
 check "the client played at least $play s of tics ($cn >= $need)" $([ "$cn" -ge "$need" ] && echo 0 || echo 1)
 if [ "$cn" -gt 0 ] && [ "$sn" -gt 0 ]; then
-    first="$(python3 -I "$root/tests/tools/testdump-diff.py" --info "$work/c/c.bin")"
+    first="$(python3 -I "$root/tests/tools/testdump-diff.py" --info "$work/c/c.run")"
     echo "client: $first"
-    slast="$(python3 -I "$root/tests/tools/testdump-diff.py" --info "$work/s/s.bin" | sed 's/.*\.\.//')"
+    slast="$(python3 -I "$root/tests/tools/testdump-diff.py" --info "$work/s/s.run" | sed 's/.*\.\.//')"
     clast="$(printf '%s' "$first" | sed 's/.*\.\.//')"
     check "the server kept running: its last tic $slast >= the client's last tic $clast minus 5" \
         $([ "${slast:-0}" -ge $(( ${clast:-0} - 5 )) ] && echo 0 || echo 1)
-    res="$(python3 -I "$root/tests/tools/testdump-diff.py" --common "$work/s/s.bin" "$work/c/c.bin")"; rc=$?
+    res="$(python3 -I "$root/tests/tools/testdump-diff.py" --common "$work/s/s.run" "$work/c/c.run")"; rc=$?
     echo "  compare: $res"
     check "every tic both files have is identical" $rc
-    act="$(python3 -I - "$work/c/c.bin" <<'PY'
+    act="$(python3 -I - "$work/c/c.run" <<'PY'
 import struct, sys
 d = open(sys.argv[1], 'rb').read()
 r = [struct.unpack_from('<7I', d, i) for i in range(0, len(d), 28)]
@@ -173,6 +222,16 @@ if grep -qiE "$faults" "$work/s/out.txt" "$work/c/out.txt" 2>/dev/null; then
     grep -iE "$faults" "$work/s/out.txt" "$work/c/out.txt" | head -5
 else
     check "no consistency fault or repair in the logs" 0
+fi
+if [ -n "$lossy" ]; then
+    # the datagrams really were lost, duplicated and reordered (the counts each game prints when it leaves)
+    for who in s c; do
+        line="$(grep 'TEST: impair: of' "$work/$who/out.txt" | tail -1)"
+        echo "  $who: ${line:-no impairment report}"
+        [[ "$lossy" == *loss=* ]] && check "$who: datagrams were lost" $(printf '%s' "$line" | grep -qE 'lost [1-9]' && echo 0 || echo 1)
+        [[ "$lossy" == *dup=* ]] && check "$who: datagrams were duplicated" $(printf '%s' "$line" | grep -qE 'duplicated [1-9]' && echo 0 || echo 1)
+        [[ "$lossy" == *reorder=* ]] && check "$who: datagrams were reordered" $(printf '%s' "$line" | grep -qE 'reordered [1-9]' && echo 0 || echo 1)
+    done
 fi
 # Sanitizer reports (none in a normal build): a site not in tests/asan-known.txt fails.
 newsites="$(python3 -I "$root/tests/tools/sanitizer-sites.py" --unknown "$root/tests/asan-known.txt" \
