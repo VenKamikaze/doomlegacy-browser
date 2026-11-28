@@ -144,6 +144,7 @@ int    net_packetheader_length;
 // Network stats.
 tic_t   stat_starttic;      // tic of start of stat interval
 int     stat_getbytes = 0;  // bytes received this interval
+unsigned int  net_packets_got = 0;  // datagrams received, ever (the browser's connect loops idle only when none came)
 uint64_t  stat_sendbytes = 0;  // bytes sent, total
 int     stat_retransmits = 0;  // packets resent
 int     stat_duppacket = 0;  // received duplicate packets
@@ -1733,6 +1734,7 @@ boolean HGetPacket (void)
         return false; // no packet
    
     stat_getbytes += (net_packetheader_length + doomcom->datalength); // for stat
+    net_packets_got++;
 
     if( doomcom->remotenode < MAXNETNODES )
     {

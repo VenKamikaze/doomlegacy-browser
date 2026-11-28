@@ -70,6 +70,7 @@ boolean Net_GetNetStat(void);
 
 extern int    net_packetheader_length;
 extern int       stat_getbytes;
+extern unsigned int  net_packets_got;  // datagrams received, ever
 extern uint64_t  stat_sendbytes;        // realtime updated 
 
 void    Net_AckTicker(void);

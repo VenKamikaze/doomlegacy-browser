@@ -50,6 +50,8 @@ const check = L.check;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const now = () => Date.now();
 const SABOTAGE = process.env.NETPLAY_SABOTAGE || '';
+const GAPMAX = +(process.env.NETPLAY_GAPMAX || 5000);    // the longest allowed stretch without a poll of vnet, ms
+const JOIN_RUNS = +(process.env.NETPLAY_JOIN_RUNS || 5);   // connect-spin: joins timed
 
 // How long (seconds of game time) a game runs before a late joiner comes, and after the last join.
 const JOIN_AFTER = +(process.env.NETPLAY_JOIN_AFTER || 10);
@@ -395,7 +397,7 @@ async function playGame(name, sc, run) {
     // polling: the longest stretch without a call into vnet must stay well under the relay's keepalive (5 s)
     const stats = machines.map((m) => closedStats(m.text()));
     console.log('  polls: ' + machines.map((m, i) => `${m.label} longest gap ${stats[i].gap} ms (state ${stats[i].gapFrom} to ${stats[i].gapTo}), ${stats[i].gaps100} gaps over 100 ms, ${stats[i].gaps1000} over 1 s`).join('; '));
-    check(machines.every((m, i) => stats[i].closed && stats[i].gap >= 0 && stats[i].gap < 5000), 'every machine left the room and polled vnet at least every 5 s (the keepalive)',
+    check(machines.every((m, i) => stats[i].closed && stats[i].gap >= 0 && stats[i].gap < GAPMAX), `every machine left the room and polled vnet at least every ${GAPMAX / 1000} s (the relay's keepalive is 5 s)`,
       machines.map((m, i) => `${m.label} ${stats[i].closed ? stats[i].gap + ' ms' : 'no "vnet: closed" line'}`).join(', '));
     if (sc.impair) {
       let named = 0, lost = 0, dup = 0, reo = 0;
@@ -709,11 +711,11 @@ async function spinScenario() {
   // The same joiner against a host that answers, with a savegame to download: how long the join takes.
   console.log('== connect-spin: a join in progress with a savegame to download (how long the join takes)');
   const times = [];
-  for (let r = 1; r <= 3; r++) {
+  for (let r = 1; r <= JOIN_RUNS; r++) {
     const relay2 = await startRelay(e.origin);
-    const h = startNative('spin2-host', { relay: relay2, args: ['-server', '1', '-warp', '1', '1', '+botgen', '1', '+botrandseed', '136', '-testaddbots', '10', '4'] });
+    const h = startNative('spin2-host', { relay: relay2, args: ['-server', '1', '-warp', '1', '1', '+botgen', '1', '+botrandseed', '136', '-testaddbots', '10', '6'] });
     const code2 = await waitFor(() => roomCode(h), 30000);
-    await waitFor(async () => (await h.dumpTics()) > 15 * TICRATE, 60000);
+    await waitFor(async () => (await h.dumpTics()) > 25 * TICRATE, 60000);
     const t1 = now();
     const jj = await startBrowser('spin2-joiner', { relay: relay2, transport: 'ws', args: ['-connect', code2, '-testconnectpasses'] });
     const joined = await waitFor(() => /vnet: joined room/.test(jj.text()), 30000);
@@ -730,8 +732,9 @@ async function spinScenario() {
     await jj.kill(); await relay2.stop();
   }
   const sorted = times.slice().sort((a, b) => a - b);
-  console.log(`  join time (room entered to first record): ${times.map((t) => t.toFixed(2)).join(', ')} s, median ${sorted[1].toFixed(2)} s`);
-  check(sorted[1] <= 8, `the median join takes at most 8 s (${sorted[1].toFixed(2)} s)`);
+  const med = sorted[Math.floor(sorted.length / 2)];
+  console.log(`  join time (room entered to first record): ${times.map((t) => t.toFixed(2)).join(', ')} s, median ${med.toFixed(2)} s`);
+  check(med <= 8, `the median join takes at most 8 s (${med.toFixed(2)} s)`);
 }
 
 // ---- main -------------------------------------------------------------------------------------------------------

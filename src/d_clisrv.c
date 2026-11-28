@@ -2777,6 +2777,7 @@ static void repair_handler_client( byte nnode )
         // Loop here while savegame is downloaded.
         while( netfile_download )
         {
+            unsigned int  got_before = net_packets_got;
             Net_Packet_Handler();
             if( network_state < NETS_active )  // Need client to server connection
                 goto reset_to_title_exit;  // connection closed by cancel or timeout
@@ -2805,8 +2806,8 @@ static void repair_handler_client( byte nnode )
                 if( Filetx_file_cnt )  // File download in progress.
                     Filetx_Ticker();
             }
-            else
-                I_Web_Idle();   // browser: let the page run between tics instead of spinning (bugs.md L60)
+            else if( net_packets_got == got_before )
+                I_Web_Idle();   // browser: nothing came: let the page run until the next tic instead of spinning (bugs.md L60)
             TestDump_ConnectPass();
         }
 
@@ -3278,6 +3279,7 @@ static void CL_ConnectToServer( void )
 {
     int  i;
     tic_t   askinfo_tic = 0;  // to repeat askinfo
+    unsigned int  got_before = 0;  // net_packets_got before the pass (the browser idles only when nothing came)
 
     if( network_state < NETS_open )
          goto reset_to_title_exit;  // connection closed by cancel or timeout
@@ -3470,6 +3472,7 @@ static void CL_ConnectToServer( void )
             // CLM_connected will exit the loop
         }
 
+        got_before = net_packets_got;
         Net_Packet_Handler();
         if( network_state < NETS_connecting )  // Need client to server.
             goto reset_to_searching;  // connection closed by cancel or timeout
@@ -3509,8 +3512,8 @@ static void CL_ConnectToServer( void )
             CON_Drawer ();
             I_FinishUpdate ();              // page flip or blit buffer
         }
-        else
-            I_Web_Idle();   // browser: let the page run between tics instead of spinning (bugs.md L60)
+        else if( net_packets_got == got_before )
+            I_Web_Idle();   // browser: nothing came: let the page run until the next tic instead of spinning (bugs.md L60)
         TestDump_ConnectPass();
     } while ( cl_mode != CLM_connected );
 
