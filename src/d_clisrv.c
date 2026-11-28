@@ -297,6 +297,7 @@ static tic_t    nettics[MAXNETNODES];     // what tic the client have received
 static tic_t    nextsend_tic[MAXNETNODES]; // what server sent to client
 
 static tic_t    next_tic_send;     // min of the nettics
+static tic_t    tic_hold;          // lowest tic that must still be kept: next_tic_send, or a joining node's savegame tic
 static tic_t    next_tic_clear=0;  // clear next_tic_clear to next_tic_send
 static tic_t    maketic;
 #ifdef CLIENTPREDICTION2
@@ -871,7 +872,7 @@ static void net_textcmd_handler( byte nnode )
 
             // When a textbuf is too full, use the next tic.	   
             tic++;
-            if( tic >= (next_tic_send+BACKUPTICS) )
+            if( tic >= (tic_hold+BACKUPTICS) )
                 goto drop_packet;  // ran out of tic buffers
         }
 
@@ -6134,12 +6135,17 @@ static void SV_Send_Tic_Update( int count )
     hold = next_tic_send;
     for( nn=0; nn<MAXNETNODES; nn++)
     {
-        if( (nnode_state[nn] > NOS_recognized) && (nnode_state[nn] <= NOS_join_timeout)
-            && (nettics[nn] < hold) )
+        // Only a node that was sent a savegame and whose player has yet to be added. Not a
+        // drone, or a client that has yet to ask for the savegame: they stay in a join state
+        // for good, and the server would stop making tics.
+        if( (nnode_state[nn] >= NOS_join_savegame) && (nnode_state[nn] <= NOS_join_timeout)
+            && join_waiting[nn] && (nettics[nn] < hold) )
         {
            hold = nettics[nn];
         }
     }
+
+    tic_hold = hold;
 
     // Don't erase tics not acknowledged
     if( (maketic+count) >= (hold+BACKUPTICS) )
