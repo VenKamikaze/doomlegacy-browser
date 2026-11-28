@@ -1512,6 +1512,17 @@ void I_Init_TCP_Network( void )
         return;
     }
 
+#ifdef __EMSCRIPTEN__
+    // A browser has no UDP: a network game goes through a relay (-relay URL, which the page passes when it has one).
+    if( netgame || M_CheckParm("-connect") || M_CheckParm("-dedicated") )
+    {
+        printf("vnet: a network game in the browser needs a relay, and this page has none (the \"relay\" entry of config.js)\n");
+        fflush(stdout);
+        netgame = false;   // as vn_fatal_arg: I_Error would send a packet through netbuffer, not set yet
+        I_Error("A network game in the browser needs a relay: this page has none (config.js, \"relay\")");
+    }
+#endif
+
 #ifdef USE_IPX
     ipx_select = M_CheckParm("-ipx");
 #endif

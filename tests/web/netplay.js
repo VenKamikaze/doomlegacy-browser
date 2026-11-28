@@ -8,7 +8,14 @@
 //   node tests/web/netplay.js ws wt                    # these, one after the other
 //   node tests/web/netplay.js --runs 3 impaired        # 3 runs of each named scenario (default 1)
 //   node tests/web/netplay.js                          # every scenario once
-//   NETPLAY_SABOTAGE=name node tests/web/netplay.js ...   # a failure proof: see SABOTAGE below
+//   NETPLAY_SABOTAGE=name node tests/web/netplay.js ...   # a failure proof of the test itself (below)
+//
+// Failure proofs of the test's own checks (AC9; a source change is proved by a build with it reverted, see the Outcome):
+//   NETPLAY_SABOTAGE=nowt      a WebTransport scenario's pages are given no relay_wt and relay_cert: they use the WebSocket, and the
+//                              transport check must fail
+//   NETPLAY_SABOTAGE=flip      one byte of the last machine's dump is changed before the comparison: it must see the difference
+//   NETPLAY_SABOTAGE=short     the last machine's dump is cut to its first half: the length check must fail
+//   NETPLAY_SABOTAGE=noerrpage (errors) the page's network bar is not read: the "failure visible on the page" checks must fail
 //
 // Needs build/wasm/bin (scripts/build-wasm.sh), the native build/native/bin/doomlegacy (scripts/build-native.sh),
 // testdata/freedoom1.wad (scripts/fetch-test-data.sh) and the relay (scripts/build-relay.sh, built here if it is
@@ -132,7 +139,7 @@ async function startBrowser(name, o) {
     test: '1', persist: '0', home: '/work', audio: 'dummy', raw: '1', iwad: '/freedoom1.wad',
     relay: o.relay.ws, args: JSON.stringify(['-nosound', '-skill', '3'].concat(o.args, ['-testdump', m.dumpName])),
   });
-  if (o.transport === 'wt') { q.set('relay_wt', o.relay.wt); q.set('relay_cert', o.relay.cert); }
+  if (o.transport === 'wt' && SABOTAGE !== 'nowt') { q.set('relay_wt', o.relay.wt); q.set('relay_cert', o.relay.cert); }
   if (o.impair) { q.set('impair', o.impair); }
   for (const k of Object.keys(o.query || {})) { q.set(k, o.query[k]); }
   m.context = await e.browser.newContext({ viewport: { width: 800, height: 600 } });
@@ -338,6 +345,8 @@ async function playGame(name, sc, run) {
     // snapshot every file at one moment, then leave (joiners first)
     const dumps = [];
     for (const m of machines) { dumps.push(await m.dump()); }
+    if (SABOTAGE === 'flip' && dumps[dumps.length - 1]) { const d = Buffer.from(dumps[dumps.length - 1]); d[Math.floor(d.length / 2 / REC) * REC + 9] ^= 0x40; dumps[dumps.length - 1] = d; }
+    if (SABOTAGE === 'short' && dumps[dumps.length - 1]) { dumps[dumps.length - 1] = dumps[dumps.length - 1].subarray(0, Math.floor(dumps[dumps.length - 1].length / 2 / REC) * REC); }
     for (const m of machines.slice().reverse()) {
       await m.quit();
       await m.waitEnd(25000);
@@ -408,9 +417,331 @@ async function playGame(name, sc, run) {
   }
 }
 
+// ---- errors (brief 04 section 5) ---------------------------------------------------------------------------------
+// Each case: what is done, then within a bound (seconds from the trigger) the page shows the failure (window.dlNet and the
+// bar under the picture), is not left on "connecting", and the game is at its title screen (still running, still writing its
+// dump) or, for a bad argument, has ended with the message on the overlay.
+
+// True while the machine's dump file grows over 1.5 s: the game is running (at the title screen, after a failed network game).
+async function growing(m) {
+  const a = await m.dumpTics();
+  return !!(await waitFor(async () => (await m.dumpTics()) > a, 6000));
+}
+
+// What the page shows: { kind, text, shown } (the sabotage reads nothing).
+async function pageNet(m) {
+  if (SABOTAGE === 'noerrpage') { return { kind: 0, text: '', shown: false, bar: '' }; }
+  return m.net();
+}
+
+// Waits until the page shows a failed network game (kind 3); returns the seconds it took from t0, or -1.
+async function waitFailed(m, t0, boundSecs) {
+  const ok = await waitFor(async () => { const n = await pageNet(m); return n && n.kind === 3; }, (boundSecs + 5) * 1000);
+  return ok ? (now() - t0) / 1000 : -1;
+}
+
+async function checkFailure(label, m, t0, bound, textRe) {
+  const secs = await waitFailed(m, t0, bound);
+  const n = await pageNet(m);
+  check(secs >= 0 && secs <= bound, `${label}: the page shows the failure within ${bound} s (${secs >= 0 ? secs.toFixed(1) + ' s' : 'never'})`, n && n.text);
+  check(!!n && n.kind === 3 && n.shown && textRe.test(n.bar), `${label}: the bar under the picture says why ("${(n && n.bar || '').replace(/\n/g, ' ').slice(0, 110)}")`, `expected ${textRe}`);
+  check(!!n && !/Creating a room|Joining a room/.test(n.bar), `${label}: no stale "connecting" state`);
+  check((await m.state()) === 'running', `${label}: the game is still running (at the title screen), not stuck on a dead page`, await m.state());
+  check(await growing(m), `${label}: the game goes on at the title screen (its dump keeps growing)`);
+  console.log(`  ${label}: ${secs >= 0 ? secs.toFixed(1) : 'never'} s`);
+}
+
+// The game ends at once with the message on the overlay (a bad argument): state error, status text.
+async function checkRefused(label, m, textRe, boundSecs) {
+  const t0 = now();
+  const st = await m.waitEnd((boundSecs || 15) * 1000);
+  const text = await m.status();
+  check(st === 'error' || st === 'ended', `${label}: the page ends within ${boundSecs || 15} s (${((now() - t0) / 1000).toFixed(1)} s, ${st})`);
+  check(textRe.test(text), `${label}: the overlay says why ("${text.replace(/\n/g, ' ').slice(0, 130)}")`, `expected ${textRe}`);
+  check((await m.exitCode()) !== 0, `${label}: the game's exit status is not 0 (${await m.exitCode()})`);
+}
+
+async function errorsScenario() {
+  const e = await env();
+  const dead = { ws: 'ws://127.0.0.1:1/vnet', wt: '', cert: '', udp: '127.0.0.1:1' };
+  const base = ['-warp', '1', '1'];
+
+  console.log('== errors: the relay is not listening (a game creates a room)');
+  {
+    const m = await startBrowser('err-unreach', { relay: dead, transport: 'ws', args: ['-server', '1'].concat(base) });
+    const t0 = now();
+    const seenConnecting = await waitFor(async () => { const n = await pageNet(m); return n && n.kind === 1; }, 8000);
+    check(!!seenConnecting || SABOTAGE === 'noerrpage', 'the page showed "connecting" first');
+    await checkFailure('relay not listening', m, t0, 20, /cannot create a room on relay ws:\/\/127\.0\.0\.1:1\/vnet/);
+    await m.kill();
+  }
+
+  console.log('== errors: no such room');
+  {
+    const relay = await startRelay(e.origin);
+    const m = await startBrowser('err-noroom', { relay, transport: 'ws', args: ['-connect', 'ZZZZZZ'] });
+    await checkFailure('no such room', m, now(), 10, /cannot join room ZZZZZZ.*no room with that code|no such room|no room/i);
+    await m.kill(); await relay.stop();
+  }
+
+  console.log('== errors: the room is full (the relay allows 2 members)');
+  {
+    const relay = await startRelay(e.origin, ['-max-members', '2']);
+    const host = await startBrowser('err-full-host', { relay, transport: 'ws', args: ['-server', '2'].concat(base) });
+    const code = await waitFor(() => roomCode(host), 60000);
+    const a = await startBrowser('err-full-a', { relay, transport: 'ws', args: ['-connect', code] });
+    await waitFor(async () => (await a.dumpTics()) > 35, 60000);
+    const b = await startBrowser('err-full-b', { relay, transport: 'ws', args: ['-connect', code] });
+    await checkFailure('room full', b, now(), 10, /room.*full|full/i);
+    check((await host.alive()) && (await a.alive()), 'room full: the two players already in the room were not disturbed');
+    await b.kill(); await a.kill(); await host.kill(); await relay.stop();
+  }
+
+  console.log('== errors: the relay is lost during a game (killed; it was started with -keepalive 1s)');
+  {
+    const relay = await startRelay(e.origin, ['-keepalive', '1s']);
+    const host = await startBrowser('err-rl-host', { relay, transport: 'ws', args: ['-server', '2'].concat(base) });
+    const code = await waitFor(() => roomCode(host), 60000);
+    const a = await startBrowser('err-rl-a', { relay, transport: 'ws', args: ['-connect', code] });
+    await waitFor(async () => (await a.dumpTics()) > 5 * TICRATE && (await host.dumpTics()) > 5 * TICRATE, 60000);
+    const t0 = now();
+    try { process.kill(-relay.child.pid, 'SIGKILL'); } catch (err) { /* gone */ }
+    await checkFailure('relay killed (host)', host, t0, 15, /relay session ended/);
+    await checkFailure('relay killed (joiner)', a, t0, 15, /relay session ended/);
+    await a.kill(); await host.kill(); await relay.stop();
+  }
+
+  console.log('== errors: the relay drops a member (-session-timeout 3s; the page is frozen for 6 s)');
+  {
+    const relay = await startRelay(e.origin, ['-keepalive', '1s', '-session-timeout', '3s']);
+    const host = await startBrowser('err-rd-host', { relay, transport: 'ws', args: ['-server', '2'].concat(base) });
+    const code = await waitFor(() => roomCode(host), 60000);
+    const a = await startBrowser('err-rd-a', { relay, transport: 'ws', args: ['-connect', code] });
+    await waitFor(async () => (await a.dumpTics()) > 5 * TICRATE && (await host.dumpTics()) > 5 * TICRATE, 60000);
+    // block the joiner's main thread: no polls, no keepalives
+    const freeze = a.page.evaluate(() => { const t = performance.now(); while (performance.now() - t < 6000) { /* frozen */ } }).catch(() => {});
+    await freeze;
+    const t0 = now();
+    await checkFailure('member dropped by the relay', a, t0, 10, /relay session ended/);
+    await a.kill(); await host.kill(); await relay.stop();
+  }
+
+  console.log('== errors: the host is gone during a game (its page is closed)');
+  {
+    const relay = await startRelay(e.origin);
+    const host = await startBrowser('err-hg-host', { relay, transport: 'ws', args: ['-server', '2'].concat(base) });
+    const code = await waitFor(() => roomCode(host), 60000);
+    const a = await startBrowser('err-hg-a', { relay, transport: 'ws', args: ['-connect', code] });
+    await waitFor(async () => (await a.dumpTics()) > 5 * TICRATE && (await host.dumpTics()) > 5 * TICRATE, 60000);
+    const t0 = now();
+    await host.kill();
+    await checkFailure('host gone', a, t0, 30, /Server (Timeout|has Shutdown)/);
+    await a.kill(); await relay.stop();
+  }
+
+  console.log('== errors: -relay is not a valid URL (the game refuses it; the page shows the message)');
+  const bad = [
+    ['ws://', /-relay ws:\/\/: it has no host name/],
+    ['127.0.0.1:7777', /-relay 127\.0\.0\.1:7777: it does not start with ws:\/\/ or wss:\/\//],
+    ['http://127.0.0.1/vnet', /does not start with ws:\/\/ or wss:\/\//],
+    ['ws://127.0.0.1:99999/vnet', /the port is not a number from 1 to 65535/],
+    ['ws://127.0.0.1:8080', /it has no path/],
+    ['ws://a b/vnet', /space or a control character/],
+    ['ws://' + 'h'.repeat(200) + '/vnet', /characters long \(at most 159\)/],
+  ];
+  for (const [value, re] of bad) {
+    const m = await startBrowser('err-badurl', { relay: dead, transport: 'ws', args: ['-server', '1'], query: { relay: value, relayraw: '1' } });
+    await checkRefused(`-relay ${value.length > 40 ? value.slice(0, 20) + '...' : value}`, m, re);
+    await m.kill();
+  }
+  {
+    const m = await startBrowser('err-norelay', { relay: dead, transport: 'ws', args: ['-relay', 'ws://127.0.0.1:1/vnet', '-server', '1'], query: { relay: '' } });
+    await checkRefused('-relay on a page with no relay configured', m, /this page has no relay configured/);
+    await m.kill();
+  }
+  {
+    // no -relay at all: a network game needs one in the browser
+    const m = await startBrowser('err-nonet', { relay: dead, transport: 'ws', args: ['-server', '2'], query: { relay: '' } });
+    await checkRefused('-server on a page with no relay', m, /relay|network/i);
+    await m.kill();
+  }
+}
+
+// ---- knobs (brief 04 section 3 and AC7) ---------------------------------------------------------------------------
+
+async function knobsScenario() {
+  const e = await env();
+  const relay = await startRelay(e.origin);
+  console.log('== knobs: the address bar has no effect without ?test=1');
+  {
+    const ctx = await e.browser.newContext({ viewport: { width: 800, height: 600 } });
+    const page = await ctx.newPage();
+    const lines = [];
+    page.on('console', (msg) => lines.push(msg.text()));
+    const q = new URLSearchParams({ relay: relay.ws, relay_wt: relay.wt, relay_cert: relay.cert, impair: 'loss=50', relayraw: '1',
+      args: JSON.stringify(['-server', '1', '-warp', '1', '1', '-testdump', 'k.bin']), iwad: '/freedoom1.wad', persist: '0', home: '/work' });
+    await page.goto(e.base + '?' + q);
+    await L.waitState(page, ['ready', 'nodata', 'error'], 60000);
+    check((await page.evaluate(() => window.dlState)) === 'ready', 'a page without ?test=1 loads and offers the game', await page.evaluate(() => window.dlState));
+    check(await page.evaluate(() => typeof window.dlTest === 'undefined'), 'it has no test hooks (window.dlTest)');
+    await page.click('#start');
+    await sleep(6000);
+    const r = await page.evaluate(() => ({ state: window.dlState, env: Object.keys(window.Module.ENV || {}).filter((k) => /^(DL_|VNET)/.test(k)), net: window.dlNet.kind }));
+    const text = lines.join('\n');
+    check(r.env.length === 0, 'the game was given none of DL_RELAY, DL_RELAY_WT, DL_RELAY_CERT and VNET_IMPAIR', r.env.join(','));
+    check(!/vnet:/.test(text), 'the game printed nothing about vnet: no relay, no room, no -relay (its arguments are the page\'s own)');
+    check(!/relay-ws|relay-wt|room code/.test(text) && r.net === 0, 'no network game, nothing shown about one');
+    check(!/room/i.test(relay.log().replace(/LISTEN.*/, '')) , 'the relay saw no room and no member', relay.log().split('\n').slice(-3).join(' | '));
+    check(r.state === 'running', 'the game runs single player (the page does not stop at the unknown arguments)', r.state);
+    await ctx.close();
+  }
+
+  console.log('== knobs: a page whose config.js names a relay offers it; the address bar cannot change it');
+  {
+    const cfg = path.join(tmpRoot, 'config-relay.js');
+    fs.writeFileSync(cfg, fs.readFileSync(path.join(L.BUILD, 'config.js'), 'utf8').replace("relay: ''", "relay: '" + relay.ws + "'"));
+    const server2 = await serve(L.BUILD, { '/config.js': cfg }, 0);
+    const base2 = `http://127.0.0.1:${server2.address().port}/index.html`;
+    const ctx = await e.browser.newContext({ viewport: { width: 800, height: 600 } });
+    const page = await ctx.newPage();
+    const lines = [];
+    page.on('console', (msg) => lines.push(msg.text()));
+    await page.goto(base2 + '?' + new URLSearchParams({ relay: 'ws://127.0.0.1:2/vnet', relay_wt: 'https://127.0.0.1:2/vnet', iwad: '/freedoom1.wad', persist: '0', home: '/work' }));
+    await L.waitState(page, ['ready', 'nodata', 'error'], 60000);
+    await page.click('#start');
+    await sleep(5000);
+    const r = await page.evaluate(() => ({ state: window.dlState, relay: window.Module.ENV.DL_RELAY, wt: window.Module.ENV.DL_RELAY_WT }));
+    check(r.relay === relay.ws, `the game was given config.js's relay (not the address bar's): ${r.relay}`);
+    check(r.wt === undefined, 'the address bar\'s WebTransport address was not passed on');
+    check(/vnet: relay .* selected; use -server/.test(lines.join('\n')), 'the game took -relay and waits for -server or -connect (no game started)');
+    check(r.state === 'running', 'the game runs single player');
+    await ctx.close();
+    await new Promise((r2) => server2.close(r2));
+  }
+
+  console.log('== knobs: with ?test=1 they act, and a bad value is refused with a message');
+  {
+    const good = await startBrowser('knob-good', { relay, transport: 'wt', args: ['-server', '1', '-warp', '1', '1'], impair: 'lat=5,seed=3' });
+    const ok = await waitFor(() => /vnet: transport relay-wt/.test(good.text()), 30000);
+    check(!!ok, 'on a test page relay, relay_wt and relay_cert took effect: the game logs relay-wt');
+    check(/vnet: impairment from VNET_IMPAIR="lat=5,seed=3"/.test(good.text()), 'and impair reached vnet (it says so)');
+    await good.kill();
+    const cases = [
+      ['relay_wt', 'http://127.0.0.1:1/vnet', /relay_wt= is not valid/],
+      ['relay_wt', 'https://' + 'x'.repeat(200), /relay_wt= is 208 characters long \(at most 190\)/],
+      ['relay_cert', 'abcd', /relay_cert= is not valid/],
+      ['relay_cert', 'z'.repeat(64), /relay_cert= is not valid/],
+      ['impair', 'loss=3;drop table', /impair= is not valid/],
+      ['impair', 'loss=' + '1'.repeat(130), /impair= is 135 characters long \(at most 120\)/],
+      ['relay', 'ws://', /relay= is not valid/],
+      ['relay', 'ws://127.0.0.1:1/vnet' + 'x'.repeat(200), /relay= is 221 characters long \(at most 150\)/],
+    ];
+    for (const [k, v, re] of cases) {
+      const ctx = await e.browser.newContext();
+      const page = await ctx.newPage();
+      const q = new URLSearchParams({ test: '1', persist: '0', home: '/work', raw: '1', iwad: '/freedoom1.wad', relay: relay.ws, args: '-server 1' });
+      q.set(k, v);
+      await page.goto(e.base + '?' + q);
+      await L.waitState(page, ['ready', 'nodata', 'error'], 30000);
+      const st = await page.evaluate(() => ({ state: window.dlState, text: document.getElementById('status').textContent, starts: window.dlStarts }));
+      check(st.state === 'error' && re.test(st.text) && st.starts === 0, `${k}=${v.length > 30 ? v.slice(0, 20) + '...(' + v.length + ')' : v}: refused with a message, the game did not start`, `${st.state} ${st.text}`);
+      await ctx.close();
+    }
+    // the game's own checks (the page's passed on as they are: relayraw)
+    const gcases = [
+      ['relay_wt', 'http://127.0.0.1:1/vnet', /the WebTransport address must be https/],
+      ['relay_cert', 'abcd', /the relay certificate hash must be 64 hex digits, it is 4 characters/],
+      ['impair', 'loss=3;drop', /the impairment spec "loss=3;drop" is not valid/],
+    ];
+    for (const [k, v, re] of gcases) {
+      const m = await startBrowser('knob-raw', { relay, transport: 'ws', args: ['-server', '1'], query: { [k]: v, relayraw: '1' } });
+      await checkRefused(`the game refuses ${k}=${v}`, m, re);
+      await m.kill();
+    }
+  }
+  await relay.stop();
+}
+
+// ---- connect-spin (brief 04 section 4, AC8) ------------------------------------------------------------------------
+// A joiner waits in CL_ConnectToServer for a host that does not answer (a native host stopped with SIGSTOP right after it
+// printed its room code). -testconnectpasses makes the loop print its passes a second.
+
+function connectPasses(text) {
+  const out = [];
+  const re = /TEST: connect passes: (\d+) in (\d+) tics \((\d+) a second\)/g;
+  let r;
+  while ((r = re.exec(text))) { out.push(+r[3]); }
+  return out;
+}
+
+async function spinScenario() {
+  const e = await env();
+  const relay = await startRelay(e.origin);
+  console.log('== connect-spin: a joiner waits for a host that does not answer');
+  const host = startNative('spin-host', { relay, args: ['-server', '1', '-warp', '1', '1'] });
+  const code = await waitFor(() => roomCode(host), 30000);
+  check(!!code, 'the native host printed a room code');
+  await sleep(1500);
+  process.kill(host.child.pid, 'SIGSTOP');
+  const j = await startBrowser('spin-joiner', { relay, transport: 'ws', args: ['-connect', code, '-testconnectpasses'] });
+  await waitFor(() => /vnet: joined room/.test(j.text()), 30000);
+  await sleep(10000);
+  const rates = connectPasses(j.text());
+  const st = await j.state();
+  console.log(`  connect loop passes a second, every 2 s: ${rates.join(', ')}`);
+  const steady = rates.slice(1);       // the first window includes the start
+  const worst = steady.length ? Math.max.apply(null, steady) : -1;
+  check(steady.length >= 3, `the loop reported its passes (${steady.length} windows)`);
+  check(worst >= 0 && worst <= 1000, `the waiting joiner's loop runs at most 1,000 passes a second (most: ${worst})`);
+  check(st === 'running', 'the joiner waits in the connect loop (still running)', st);
+  // Escape: the connect loop answers it
+  const t0 = now();
+  await j.page.keyboard.down('Escape');
+  await sleep(200);
+  await j.page.keyboard.up('Escape');
+  const left = await waitFor(() => /vnet: closed/.test(j.text()), 5000);
+  const secs = (now() - t0) / 1000;
+  check(!!left && secs <= 3, `Escape ends the connect loop: the game left the room ${secs.toFixed(1)} s later`);
+  check((await j.state()) === 'running' && (await growing(j)), 'and goes on at the title screen');
+  process.kill(host.child.pid, 'SIGCONT');
+  await j.kill(); await host.kill(); await relay.stop();
+
+  // The same joiner against a host that answers, with a savegame to download: how long the join takes.
+  console.log('== connect-spin: a join in progress with a savegame to download (how long the join takes)');
+  const times = [];
+  for (let r = 1; r <= 3; r++) {
+    const relay2 = await startRelay(e.origin);
+    const h = startNative('spin2-host', { relay: relay2, args: ['-server', '1', '-warp', '1', '1', '+botgen', '1', '+botrandseed', '136', '-testaddbots', '10', '4'] });
+    const code2 = await waitFor(() => roomCode(h), 30000);
+    await waitFor(async () => (await h.dumpTics()) > 15 * TICRATE, 60000);
+    const t1 = now();
+    const jj = await startBrowser('spin2-joiner', { relay: relay2, transport: 'ws', args: ['-connect', code2, '-testconnectpasses'] });
+    const joined = await waitFor(() => /vnet: joined room/.test(jj.text()), 30000);
+    const tJoined = now();
+    const got = await waitFor(async () => (await jj.dumpTics()) > 0, 60000);
+    const tFirst = now();
+    await sleep(3000);
+    const same = (await jj.dumpTics()) > 40;
+    times.push((tFirst - tJoined) / 1000);
+    console.log(`  run ${r}: joined the room ${((tJoined - t1) / 1000).toFixed(1)} s after the start of the page; first record ${((tFirst - tJoined) / 1000).toFixed(2)} s after that; passes ${connectPasses(jj.text()).join(',')}`);
+    check(!!joined && !!got && same, `run ${r}: the join in progress completed and the game runs`);
+    await jj.quit(); await jj.waitEnd(15000);
+    const hd = await h.kill();
+    await jj.kill(); await relay2.stop();
+  }
+  const sorted = times.slice().sort((a, b) => a - b);
+  console.log(`  join time (room entered to first record): ${times.map((t) => t.toFixed(2)).join(', ')} s, median ${sorted[1].toFixed(2)} s`);
+  check(sorted[1] <= 8, `the median join takes at most 8 s (${sorted[1].toFixed(2)} s)`);
+}
+
 // ---- main -------------------------------------------------------------------------------------------------------
 
-const ALL = Object.assign({}, SCENARIOS);
+const SPECIAL = {
+  'errors': { desc: 'section 5: relay unreachable, no such room, room full, relay lost, member dropped, host gone, bad -relay', run: errorsScenario },
+  'knobs': { desc: 'section 3: the address bar has no effect without ?test=1; the knobs act with it; bad values are refused', run: knobsScenario },
+  'connect-spin': { desc: 'section 4: the passes a second of a waiting joiner, Escape, and the time of a join with a savegame', run: spinScenario },
+};
+const ALL = Object.assign({}, SCENARIOS, SPECIAL);
 
 async function main() {
   const argv = process.argv.slice(2);
@@ -431,7 +762,8 @@ async function main() {
     for (const n of todo) {
       for (let r = 1; r <= runs; r++) {
         const s0 = now();
-        await playGame(n, ALL[n], r);
+        if (SPECIAL[n]) { if (r === 1) { await SPECIAL[n].run(); } else { await SPECIAL[n].run(); } }
+        else { await playGame(n, ALL[n], r); }
         console.log(`  (${n} run ${r} took ${Math.round((now() - s0) / 1000)} s)`);
       }
     }

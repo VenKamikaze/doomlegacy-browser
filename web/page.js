@@ -39,6 +39,7 @@
 //   relay_cert=HEX   the SHA-256 of the relay's -dev-cert certificate (64 hex digits), given to the browser as serverCertificateHashes
 //   impair=SPEC      vnet's impairment spec, e.g. lat=30,jit=10,loss=3,dup=2,reorder=3,seed=7 (VNET_IMPAIR: a browser has no environment)
 //                    a malformed or over-long value of these four is refused with a message and the game does not start
+//   relayraw=1       the four values go to the game as they are (a test of the game's own checks of them)
 //   window.dlNet     what the page shows about the network game: {kind, text}; kind 0 none, 1 connecting, 2 in a room, 3 ended
 //   window.dlData    what the loader produced (source, from, name, game, size, sha256, cached, notes, hashMs, ...)
 //   window.dlStarts  how many times the page called callMain
@@ -72,9 +73,12 @@
       else { NET.note = 'config.js: relay is not a ws:// or wss:// URL (ws://HOST:PORT/vnet): no network game is offered.'; }
     }
     if (!(params.get('test') === '1')) { return; }
+    // relayraw=1 (a test of the game's own checks): the values go to the game as they are
+    var raw = params.get('relayraw') === '1';
     function knob(name, max, re, what) {
       var v = params.get(name);
       if (v === null || v === '') { return ''; }
+      if (raw) { return v; }
       if (v.length > max) { NET.error = NET.error || (name + '= is ' + v.length + ' characters long (at most ' + max + '): ' + what); return ''; }
       if (!re.test(v)) { NET.error = NET.error || (name + '= is not valid: ' + what); return ''; }
       return v;
