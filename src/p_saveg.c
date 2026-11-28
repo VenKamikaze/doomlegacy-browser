@@ -4526,6 +4526,9 @@ void P_ArchiveMisc()
     rand1 = E_Rand_Get( & rand2 );
     WRITEU32(save_p, rand1);
     WRITEU32(save_p, rand2);
+    // The pause state, for a client that joins while the game is paused (the network wait of
+    // another join, a player's pause): it only gets the commands that change it, not the state.
+    WRITEBYTE(save_p, paused);
 
     SG_Writebuf();
 }
@@ -4563,6 +4566,12 @@ boolean P_UnArchiveMisc()
         uint32_t rand1 = READU32(save_p); // cannot trust compiler to keep order
         uint32_t rand2 = READU32(save_p);
         E_Rand_Set( rand1, rand2 );
+    }
+    if( sg_version >= SG_BOB_VERSION )
+    {
+        byte pz = READBYTE(save_p);
+        // A joining client starts as paused as the game it joins; a savegame file does not pause the game.
+        if( sg_net_load )  paused = pz;
     }
 
     return true;
