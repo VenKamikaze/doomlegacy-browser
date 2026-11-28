@@ -35,6 +35,11 @@ byte TestImpair_Send( void );
 // Print the counts ("TEST: impair: ..."); a no-op without the option.
 void TestImpair_Report( void );
 
+// Test-only -testwalk FROM TO (brief F4): makes the local player's ticcmd walk forward for
+// game tics FROM..TO-1. Called by G_BuildTiccmd; nothing without the option.
+#include "d_ticcmd.h"
+void TestDump_Walk( ticcmd_t * cmd, int which_player );
+
 // True if -testdump is active.
 extern int  testdump_active;
 

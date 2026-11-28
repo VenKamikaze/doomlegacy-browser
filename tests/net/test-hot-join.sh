@@ -12,6 +12,8 @@
 #   tests/net/test-hot-join.sh --state N       # also write the text state (-teststate N) of tic N on both machines
 #   tests/net/test-hot-join.sh --join-after N  # seconds of play before the client starts (default 10)
 #   tests/net/test-hot-join.sh --play N        # seconds of game time to compare after the join (default 40)
+#   tests/net/test-hot-join.sh --walk FROM TO  # the host's player walks (runs forward) for game tics FROM..TO (-testwalk): a human
+#                                              # who is moving at the join (bugs.md L53). Try 330 400: the join is at about tic 360
 #   tests/net/test-hot-join.sh --lossy SPEC    # make both machines' datagrams lossy (-testimpair SPEC, no root), e.g.
 #                                              # loss=3,dup=2,reorder=3; the server's seed is --seed, the client's --seed + 1
 #   tests/net/test-hot-join.sh --seed N        # the seed of the impairment (default 1); a failing run is replayed with its seed
@@ -51,6 +53,7 @@ bots=()
 force=1
 state=()
 lossy=""
+walk=()
 seed=1
 runs=1
 args=("$@")
@@ -64,6 +67,7 @@ while [ $# -gt 0 ]; do
         --state) state=(-teststate ${2:?}); shift 2 ;;  # "N" or "FROM TO"
         --join-after) join_after="${2:?}"; shift 2 ;;
         --play) play="${2:?}"; shift 2 ;;
+        --walk) walk=(-testwalk ${2:?} ${3:?}); shift 3 ;;
         --lossy) lossy="${2:?}"; shift 2 ;;
         --seed) seed="${2:?}"; shift 2 ;;
         --runs) runs="${2:?}"; shift 2 ;;
@@ -132,7 +136,7 @@ check() { # check "name" status
 # game; -server 2 waits for a second player node. Bots give the game something to do.
 if [ "$together" = 1 ]; then nodes=2; else nodes=1; fi
 ( cd "$work/s" && exec "$bin" -home "$work/s" "${common[@]}" -server "$nodes" -udpport "$port_s" \
-    -warp 1 1 "${unpause[@]}" "${imp_s[@]}" -testdump s.bin "${state[@]}" "${bots[@]}" > out.txt 2>&1 ) &
+    -warp 1 1 "${unpause[@]}" "${imp_s[@]}" "${walk[@]}" -testdump s.bin "${state[@]}" "${bots[@]}" > out.txt 2>&1 ) &
 spid=$!; pids+=("$spid")
 echo "server: pid $spid, port $port_s"
 

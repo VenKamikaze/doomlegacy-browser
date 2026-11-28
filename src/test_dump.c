@@ -26,6 +26,9 @@
 //                         the host's own player slot.
 //   -testcmd TIC TEXT     (F3 fix round 1) at game tic TIC run the console command TEXT
 //                         (for example "map e1m4"); may be given several times
+//   -testwalk FROM TO     (F4) the local player (the first one) walks forward, running, with
+//                         this machine's ticcmds built for game tics FROM to TO: a human
+//                         who is moving at the join (bugs.md L53), with no input device
 //   -testcensus           print how many thinkers of each kind the level has,
 //                         each time one of the counts reaches a new maximum
 //   -testsizes            print the bytes one record of each sector effect takes
@@ -313,11 +316,12 @@ static uint32_t hash_players( void )
             F( momx, pl->mo->momx );  F( momy, pl->mo->momy );
             F( momz, pl->mo->momz );  F( angle, pl->mo->angle );
         }
-        // Not hashed: viewz, bob, bob_momx and bob_momy (and the weapon sprite's
-        // sx and sy below). They are the view bobbing: a savegame does not hold
-        // them, so a player that joined by savegame has them differ for a while
-        // (they decay with friction), and nothing in the game reads them. The
-        // weapon's state and tics are hashed, which is what the bob can change.
+        // The walking bob (bob_momx, bob_momy) is hashed since F4: a savegame holds it (10150,
+        // bugs.md L25, L53) and it decides when a player's mobj leaves its running frames.
+        // Not hashed: viewz, bob and the weapon sprite's sx and sy below: the view bobbing,
+        // which nothing in the simulation reads. The weapon's state and tics are hashed, which
+        // is what the bob can change.
+        F( bobx, pl->bob_momx );  F( boby, pl->bob_momy );
         F( viewheight, pl->viewheight );
         F( deltaviewheight, pl->deltaviewheight );
         F( aiming, pl->aiming );
@@ -371,13 +375,6 @@ static uint32_t hash_players( void )
         line_begin( "botglobals %d", 0 );
         F( oksector, sector_num( oksector ) );
         F( grid, B_Grid_Hash() );   // every machine must have built the same node grid
-        // The players' walking bob, which a savegame holds when there are bots (bugs.md
-        // L25, L53): it decides when a player's mobj leaves its running frames.
-        for( j = 0; j < MAXPLAYERS; j++ )
-        {
-            if( ! playeringame[j] )  continue;
-            F( bobx, players[j].bob_momx );  F( boby, players[j].bob_momy );
-        }
         if( B_Get_speed_state( &frac, &tics ) )
         {
             F( speedfrac, frac );  F( runtics, tics );
@@ -686,6 +683,7 @@ static const char *  testload_file = NULL;
 static int  options_read = 0;
 static int  census_on = 0;
 #define MAX_TESTCMD  8
+static tic_t  testwalk_from = 0, testwalk_to = 0;
 static struct { tic_t tic; const char * text; } testcmd[MAX_TESTCMD];
 static int  num_testcmd = 0;
 static tic_t  addbots_tic = 0;
@@ -709,6 +707,12 @@ static void read_options( void )
     if( i && M_IsNextParm() )  testquit_tic = (tic_t) atoi( M_GetNextParm() );
     i = M_CheckParm( "-testload" );
     if( i && M_IsNextParm() )  testload_file = M_GetNextParm();
+    i = M_CheckParm( "-testwalk" );
+    if( i && i + 2 < myargc )
+    {
+        testwalk_from = (tic_t) atoi( myargv[i + 1] );
+        testwalk_to = (tic_t) atoi( myargv[i + 2] );
+    }
     census_on = M_CheckParm( "-testcensus" );
     for( i = 1; i + 2 < myargc && num_testcmd < MAX_TESTCMD; i++ )
     {
@@ -1234,4 +1238,12 @@ void TestImpair_Report( void )
             impair_n_total, impair_n_lost, impair_n_dup, impair_n_reordered, impair_n_sent );
     fflush( stdout );
     impair_on = 0;  // once
+}
+
+// -testwalk: called at the end of G_BuildTiccmd for the local player.
+void TestDump_Walk( ticcmd_t * cmd, int which_player )
+{
+    if( testwalk_to == 0 || which_player != 0 )  return;
+    if( gametic < testwalk_from || gametic >= testwalk_to )  return;
+    cmd->forwardmove = 50;  // running speed
 }
