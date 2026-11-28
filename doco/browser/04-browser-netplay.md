@@ -156,4 +156,64 @@ The browser runs at normal pace: not `fast=1`, since lockstep runs in real time.
 
 ## Outcome
 
-Status: not started.
+Status: **done by the implementer, 28 Nov 2026 (review pending)**. Branch `browser/04-browser-netplay`, commits `9d16b0d`, `44647c9`, `bf0da7b`, `9ab1de8`, `1eca701`, `c0ddd89` and the docs commit after it, all pushed; nothing merged, no pull request. Not tested: a person playing, a hidden tab, Firefox or Safari, a real certificate, a repair download in a browser (needs a consistency fault).
+
+**What changed**
+
+- *Build.* `scripts/wasm.mk` builds `ext/vnet/src/*.c` (vnet's flags) and `i_vnet.c` with `-DUSE_VNET`, links `-lwebsocket.js`; `flags.stamp` has `VNET=`. 25 s from scratch with an empty cache; `doomlegacy.wasm` 2.85 MB. Native: 11 warnings, as before.
+- *`i_vnet.c`.* In the browser `-relay` is a `ws://`/`wss://` URL (validated, each fault named; no host lookup); the transport is logged (`vnet: transport relay-wt|relay-ws|relay-udp`); the test knobs `DL_RELAY_WT`, `DL_RELAY_CERT` and `VNET_IMPAIR` come from the environment (checked again by the game); the driver measures the gaps between its polls and prints them on leaving the room; it tells the page what the network game is doing (`I_Web_NetStatus`). `d_clisrv.c`: the two handlers that show "Server Timeout" and "Server has Shutdown" do the same; `I_Web_Idle` in the connect and repair loops (L60). `i_tcp.c`: a network game with no relay is refused in the browser (L69). `test_dump.c`: `-testconnectpasses`, and the page can ask the game to quit.
+- *The page.* `config.js` has `relay`; only a `?test=1` page takes `relay=`, `relay_wt=`, `relay_cert=`, `impair=` from the address; a line under the picture shows the network state and why a game ended (`window.dlNet`). `data-hosting.md` says what the relay needs.
+- *Tests.* `tests/web/netplay.js` (13 scenarios, `building.md` §12).
+
+**Acceptance criteria**
+
+| AC | Result |
+|---|---|
+| 1 build | the wasm build links vnet; with `EM_CACHE=/tmp/em-cache-clean` seeded by `scripts/setup-emsdk.sh --with-ports` and an empty build directory, `scripts/build-wasm.sh BUILD=/tmp/wasm-clean` builds with no download in 32 s (`doomlegacy.wasm` 2.85 MB); with the cache warm, 24 to 25 s. Native build and tests unchanged: `demo-hash.sh` **11 of 11** (289 s), `test-relay.sh` clean and impaired, `--bots`, `--dedicated`, `test-relay-errors.sh`, `test-hot-join.sh`, `pause-order`, `servertic-sections`, `test-drone`, `test-two-joiners`, `draw-independence`, `sprite-column-oob`, `bots-native-wasm`, `savegame-malformed`, `savegame-f3`, `savegame-old` (12 of 12, after test_dump.c was made to compile in the old build again), `savegame-portable` (117 passed, 576 s) all pass. Browser tests: `smoke` 36/0, `persist` 12/0, `exits` 18/0, `data` 159/0, `iwad-table` 40/0, `demo-page` 11/0 (**once 10/1**: the 100 ms stall check, "largest 177 ms", run straight after other work; it passed on the re-run). **Exception: `test-hot-join.sh --lossy loss=3,dup=2,reorder=3` fails at its default seed 1 (4 of 5 with seeds 1 to 5), also on a build of `ba8a7a5`, before this brief: `bugs.md` L70.** |
+| 2 play | `ws`, `wt`, `browser-host-native`, `native-host`: **3 of 3 each**, files identical (1,070 to 1,078 records), each transport the one asked for (34 to 41 s a game). |
+| 3 join in progress | `hot-join-browser`, `hot-join-native`, `hot-join-into-browser`: **3 of 3 each** (45 to 47 s). No case of L29, L63 or L64: a joiner in a page at normal pace loaded the savegame in about 0.5 s and was identical from its first record. |
+| 4 impairment | `impaired` (WebTransport) and `impaired-ws`: **3 of 3 each** at `lat=30,jit=10,loss=3,dup=2,reorder=3`, a seed per machine (about 150 lost, 80 to 105 duplicated, 135 to 155 reordered per game; vnet logged the spec on every machine). |
+| 5 bots | `bots`: **3 of 3**; both machines logged 2 bots. |
+| 6 failures | `errors`, 64 checks, 100 s (a bound, then the measured time): relay not listening 20 s, 6.4 s; no such room 10 s, 0.6 s; room full 10 s, 0.9 s; relay killed 15 s, host 0.0 s and joiner 1.7 s; member dropped by the relay 10 s, 2.1 s after it thawed; host gone 30 s, 15.3 s ("Server Timeout"). Each: the bar under the picture says why, not stuck on "connecting", the game running at the title screen with its dump growing. 7 bad `-relay` values, `-relay` on a page with no relay and `-server 2` on a page with no relay: the overlay shows the message, status not 0. |
+| 7 knobs | `knobs`, 30 checks, 18 s: no effect without `?test=1` (no `DL_*` or `VNET_IMPAIR` in the game's environment, no relay contact, no hooks); config.js's relay is passed, the address bar's is not; with `?test=1` they act; 8 bad values refused by the page and 3 by the game. |
+| 8 L60 | `connect-spin`: a waiting joiner made **350 to 366 passes a second** (about 450,000 to 550,000 without the yield). Escape ends the loop (the room is left in under 3 s). A join in progress of a 6-bot game: median **0.51 s** after, **0.52 s** before (5 runs each). |
+| 9 failure proofs | below. |
+| 10 | the list above; `asan-demos.sh`: 53 sites, 0 new (206 s). |
+
+Whole batch of the ten game scenarios, 3 runs each: **30 games, 453 checks, 21 minutes, 0 failed.**
+
+**Failure proofs** (each change reverted, or the test's own switch, then restored)
+
+| Reverted | Test | Result |
+|---|---|---|
+| the yield in the two loops (a build without them, `build/wasm-before`) | `connect-spin` | 450,000 to 530,000 passes a second: 1 failed |
+| the page's test gate (`return` when not `?test=1`) | `knobs` | all four knobs reach the game without `?test=1`: 4 failed |
+| `I_Web_NetStatus` in `vn_failed` | `errors` | the bar stays on "Creating/Joining a room" or "Hosting room": 15 failed (including the stale-connecting checks) |
+| the page's network bar not read (`NETPLAY_SABOTAGE=noerrpage`) | `errors` | 14 failed |
+| the game's `DL_RELAY` check and the no-relay refusal in `i_tcp.c` | `errors` | both cases run to the 15 s bound with no message: 4 failed |
+| the transport log line, and the page's quit request | `ws` | the transport check, the exit status and the "left the room" checks: 5 failed |
+| no `relay_wt`/`relay_cert` in a `wt` game (`NETPLAY_SABOTAGE=nowt`) | `wt` | both pages log `relay-ws`: 2 failed |
+| one byte of the last machine's dump changed (`flip`) | `wt` | "first difference at tic 535 ... random": 1 failed |
+| that dump cut in half (`short`) | `wt` | "535 >= 1050": 1 failed |
+| the poll bound lowered to 1 s (`NETPLAY_GAPMAX=1000`) | `ws` | the 2 s screen wipe's gap, 1.49 s: 1 failed |
+| the `savegame-old.sh` regression I caused (`#include "i_web.h"` in `test_dump.c`) | `savegame-old.sh` | "the old build failed": fixed, 12 of 12 |
+
+**Decisions**
+
+- *The page gives the relay to the game*: `config.js` `relay` (or `relay=` on a test page) becomes `-relay URL` and `DL_RELAY` in the game's environment; the game refuses `-relay` without `DL_RELAY`. The knobs go through the environment (`preRun`), so the engine reads them with `getenv`, and `VNET_IMPAIR` is vnet's own variable.
+- *The wake is not used*: with visible tabs the game polls every pass and yields once a frame; `impaired` 3 of 3 without it. 04b needs it (`code-facts.md` §13 says how).
+- *Failures on the page*: a line under the picture (`window.dlNet`), set by the game through `I_Web_NetStatus`; the game's own menu box stays too. A game that ends with `I_Error` is the existing overlay.
+- *Idle only when nothing came*: the first version idled in every non-tic pass and made a 6-bot join 0.2 s slower on a small savegame; now a pass that received a datagram goes round at once (`net_packets_got`).
+- *A network game with no relay is refused* in the browser (L69), where it used to hang.
+- *Tests stop a page with `window.dlTest.quit()`*, a flag the game reads at its tic, so it leaves the room and prints vnet's counters.
+
+**New bugs:** L69 (fixed here), L70 (not investigated).
+
+**Concerns**
+
+- L70, above: a lossy hot join at seed 1 fails on the tip of `claudeai` as well; I did not look at it. The browser impaired runs did not show it.
+- `demo-page.js`'s stall check failed once (177 ms) and passed on the re-run: timing-sensitive on a busy machine.
+- The repair-download loop got the same yield but no test runs it.
+- The longest stretch without a poll was 1.5 to 2.0 s in every game, the level-start wipe, natively too. Under 5 s here, but a slower machine or a long level load on a real device may get closer to the relay's limits.
+- Headless Chromium has all pages visible; nothing here says what a real hidden tab does (04b).
+- A hot join is only 0.5 s because the savegame is small; large mods are not measured.
