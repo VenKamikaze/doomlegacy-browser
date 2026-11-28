@@ -581,6 +581,8 @@ extern consvar_t cv_SV_netrepair;
 void CL_Clear_Pending_Pause( void );
 // Test-only (-testpauseorder): checks the order of the pause changes; returns the failures.
 int CL_TestPauseOrder( void );
+// Test-only (-testservertics): checks how servertic_handler takes the sections of a tic packet.
+int CL_TestServerTics( void );
 extern consvar_t cv_wait_players;
 extern consvar_t cv_wait_timeout;
 extern consvar_t cv_allownewplayer;

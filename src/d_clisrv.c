@@ -5486,19 +5486,21 @@ static void servertic_handler( byte nnode )
         }
         // The sections of a packet are recorded at its start tic's slot, which is the one
         // read below. Another packet with the same start tic and another length is split
-        // in other sections, so it cannot add to these: start again (L35, the client took
+        // in other sections, so it cannot add to these: start again. (Else the client took
         // a packet of 30 tics as complete from the single tic packet of its start tic, and
-        // ran on the stale ticcmds of its lost second section).
+        // ran on the stale ticcmds of its lost second section.)
         if( (ti == start_tic) && (netseq_numtics[btic] != netbuffer->u.serverpak.numtics) )
         {
             netseq[btic] = 0;
             netseq_numtics[btic] = netbuffer->u.serverpak.numtics;
         }
-        // When this was in textcmds, it would only record for those that
-        // had actually sent a textcmd.
-        // If that packet had num_cmds=0, then empty textcmds would never be ready.
-        netseq[btic] |= seqbits; // record receiving this packet section
     }
+    // When this was in textcmds, it would only record for those that
+    // had actually sent a textcmd.
+    // If that packet had num_cmds=0, then empty textcmds would never be ready.
+    // Recorded in the start tic's slot only, which is the one read below: a bit set in the
+    // slot of a later tic would be taken for a section of the packet that starts there.
+    netseq[ BTIC_INDEX(start_tic) ] |= seqbits;  // record receiving this packet section
 
     // Nettics
     // Some extension packets may have num_cmds = 0
@@ -6367,6 +6369,96 @@ int CL_TestPauseOrder( void )
     gametic = save_gametic;
     paused = save_paused;
     printf( "TEST: pauseorder: %d cases, %d failures\n", cases, fails );
+    fflush( stdout );
+    return fails;
+}
+
+
+// ----- Test-only check of servertic_handler's sections
+
+// -testservertics: gives servertic_handler tic packets made by hand, the way SV_Send_Tics splits
+// a long one in sections of NUM_SERVERTIC_CMD ticcmds, in orders that a lossy link makes, and checks
+// that the ticcmds in the slots are the ones sent and that cl_need_tic goes only as far as the tics
+// that have come. Each ticcmd holds its tic and player in angleturn; the bytes after the ticcmds of a
+// section are stale (0x55). Prints "TEST: servertics: N cases, M failures"; returns the failures.
+static void st_section( tic_t start, int numtics, int sec, int nsec )
+{
+    int total = numtics * 2, i;
+    int k0 = sec * NUM_SERVERTIC_CMD, k1 = (sec + 1) * NUM_SERVERTIC_CMD;
+    if( k1 > total )  k1 = total;
+    memset( netbuffer, 0x55, sizeof(netbuffer_t) );
+    netbuffer->packettype = PT_SERVERTICS;
+    netbuffer->u.serverpak.starttic = start & 0xff;
+    netbuffer->u.serverpak.numtics = numtics;
+    write_N32( & netbuffer->u.serverpak.cmd_player_mask, 3 );
+    netbuffer->u.serverpak.cmds_offset = k0;
+    netbuffer->u.serverpak.num_cmds_present = k1 - k0;
+    netbuffer->u.serverpak.num_textcmd = 0;
+    netbuffer->u.serverpak.flags = ((sec < nsec - 1)? TPF_more : 0) | sec;
+    for( i = k0; i < k1; i++ )
+    {
+        ticcmd_t c;
+        memset( &c, 0, sizeof(c) );
+        c.angleturn = (int16_t)( (start + i / 2) * 4 + (i & 1) );
+        TicCmdCopy( & netbuffer->u.serverpak.cmds[i - k0], &c );
+    }
+    servertic_handler( 0 );
+}
+
+static int st_check( const char * name, tic_t from, tic_t to, tic_t want_need )
+{
+    tic_t t;
+    int bad = 0, p;
+    for( t = from; t < to; t++ )
+        for( p = 0; p < 2; p++ )
+            if( netcmds[BTIC_INDEX(t)][p].angleturn != (int16_t)( t * 4 + p ) )  bad++;
+    printf( "TEST: servertics %s: cl_need_tic %u (want %u), %d wrong ticcmds in tics %u to %u: %s\n", name,
+            (unsigned) cl_need_tic, (unsigned) want_need, bad, (unsigned) from, (unsigned) (to - 1),
+            (bad || cl_need_tic != want_need)? "FAIL" : "ok" );
+    return ( bad || cl_need_tic != want_need );
+}
+
+static void st_reset( tic_t need )
+{
+    int i;
+    for( i = 0; i < BACKUPTICS; i++ )
+    {
+        D_Clear_ticcmd( i );
+        memset( netcmds[i], 0, sizeof(netcmds[i]) );
+    }
+    cl_need_tic = maketic = gametic = need;
+    CL_num_ticcmd_per( 3 );  // players 0 and 1
+}
+
+int CL_TestServerTics( void )
+{
+    static char rawbuf[sizeof(netbuffer_t) + 64];
+    netbuffer_t * save_nb = netbuffer;
+    tic_t save_need = cl_need_tic, save_make = maketic, save_game = gametic;
+    int fails = 0, cases = 0;
+
+    netbuffer = (netbuffer_t *) rawbuf;
+    // the two sections of a packet of 30 tics come in order: all of it
+    cases++; st_reset( 100 ); st_section( 100, 30, 0, 2 ); st_section( 100, 30, 1, 2 );
+    fails += st_check( "sections in order", 100, 130, 130 );
+    // swapped: the first section must not overwrite the ticcmds of the second with stale bytes
+    cases++; st_reset( 100 ); st_section( 100, 30, 1, 2 ); st_section( 100, 30, 0, 2 );
+    fails += st_check( "sections swapped", 100, 130, 130 );
+    // and the first section again after both (a resend, a duplicate)
+    cases++; st_reset( 100 ); st_section( 100, 30, 0, 2 ); st_section( 100, 30, 1, 2 ); st_section( 100, 30, 0, 2 );
+    fails += st_check( "first section again after both", 100, 130, 130 );
+    // the packet of one tic for tic 100, then only the first section of a packet of 30 from 100:
+    // the client has tic 100 and no more
+    cases++; st_reset( 100 ); st_section( 100, 1, 0, 1 ); st_section( 100, 30, 0, 2 );
+    fails += st_check( "1-tic packet, then the first section of 30", 100, 101, 101 );
+    // the first section of (101, 30), a late (100, 3) that covers 101, the first section of (101, 30) again:
+    // the bits of the first packet must not complete the one that starts at 101 (no second section came)
+    cases++; st_reset( 101 ); st_section( 101, 30, 0, 2 ); st_section( 100, 3, 0, 1 ); st_section( 101, 30, 0, 2 );
+    fails += st_check( "bits of another packet in a later start slot", 100, 103, 103 );
+
+    netbuffer = save_nb;
+    cl_need_tic = save_need; maketic = save_make; gametic = save_game;
+    printf( "TEST: servertics: %d cases, %d failures\n", cases, fails );
     fflush( stdout );
     return fails;
 }
