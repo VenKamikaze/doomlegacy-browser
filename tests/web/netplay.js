@@ -60,7 +60,7 @@ const PLAY = +(process.env.NETPLAY_PLAY || 30);
 const IMPAIR = 'lat=30,jit=10,loss=3,dup=2,reorder=3';
 
 // What in a log is a fault: as tests/net/test-relay.sh, and what a page adds.
-const FAULTS = /consistency (fault|failure)|desync|out of sync|Client repair|Report: gametic|Kick (node|player)|savegame failed|Can.t load the level|vnet: (cannot|the relay session ended|ending)|pageerror|Something went wrong|The game crashed|The game stopped with an error/i;
+const FAULTS = /consistency (fault|failure)|desync|out of sync|Client repair|Report: gametic|Kick (node|player)|savegame failed|Can.t load the level|vnet: (cannot|the relay session ended|ending)|does not fit in a vnet datagram|pageerror|Something went wrong|The game crashed|The game stopped with an error/i;
 
 // ---- relay ------------------------------------------------------------------------------------------------
 
@@ -253,9 +253,10 @@ function activity(buf) {
 // The numbers of the "vnet: closed" and "vnet: polls" lines of a game's output.
 function closedStats(text) {
   const c = /vnet: closed \(([^,]+), room ([A-Z2-9-]+)\): sent (\d+) datagrams \(impairment lost (\d+), duplicated (\d+), reordered (\d+);.*received (\d+);/.exec(text);
+  const l = /largest datagram sent (\d+) bytes \(packet type (\d+)\)/.exec(text);
   const p = /vnet: polls: longest gap (\d+) ms \(game state (-?\d+) to (-?\d+)\); (\d+) gaps of 100 ms or more, (\d+) of 1 s, (\d+) of 5 s/.exec(text);
   return {
-    transport: c ? c[1] : '', sent: c ? +c[3] : 0, lost: c ? +c[4] : 0, dup: c ? +c[5] : 0, reordered: c ? +c[6] : 0, received: c ? +c[7] : 0,
+    transport: c ? c[1] : '', largest: l ? +l[1] : 0, largestType: l ? +l[2] : -1, sent: c ? +c[3] : 0, lost: c ? +c[4] : 0, dup: c ? +c[5] : 0, reordered: c ? +c[6] : 0, received: c ? +c[7] : 0,
     closed: !!c, gap: p ? +p[1] : -1, gapFrom: p ? +p[2] : -1, gapTo: p ? +p[3] : -1, gaps100: p ? +p[4] : -1, gaps1000: p ? +p[5] : -1, gaps5000: p ? +p[6] : -1,
   };
 }
@@ -394,6 +395,8 @@ async function playGame(name, sc, run) {
       const ec = await m.exitCode();
       check(ec === 0 && m.errors.length === 0, `${m.label}'s page: the game exited with status 0 and the page saw no error`, `status ${ec} ${m.errors.join('; ')}`);
     }
+    console.log('  largest datagram sent: ' + machines.map((m) => `${m.label} ${closedStats(m.text()).largest} bytes (type ${closedStats(m.text()).largestType})`).join(', '));
+    check(machines.every((m) => { const c = closedStats(m.text()); return c.largest > 0 && c.largest <= 1100; }), 'no datagram over the 1,100 bytes vnet carries, and none refused for its size');
     // polling: the longest stretch without a call into vnet must stay well under the relay's keepalive (5 s)
     const stats = machines.map((m) => closedStats(m.text()));
     console.log('  polls: ' + machines.map((m, i) => `${m.label} longest gap ${stats[i].gap} ms (state ${stats[i].gapFrom} to ${stats[i].gapTo}), ${stats[i].gaps100} gaps over 100 ms, ${stats[i].gaps1000} over 1 s`).join('; '));
