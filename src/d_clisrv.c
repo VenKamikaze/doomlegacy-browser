@@ -5419,7 +5419,6 @@ static void servertic_handler( byte nnode )
         for( ; ti<end_tic; ti++)
         {
             if( num_cmds == 0 )  break;  // limited to ticcmd in this packet
-            num_cmds --;
 
             // Copy the tics
             btic = BTIC_INDEX( ti );
@@ -5430,6 +5429,11 @@ static void servertic_handler( byte nnode )
             // when extension packet, cmds_offset is non-zero
             for( j = cmds_offset; j<num_ticcmd_per_tic; j++ )
             {
+                // num_cmds counts ticcmds, not tics: a packet section ends where its
+                // ticcmds do, also within a tic (the next section goes on from there), and
+                // what follows them in the buffer is not ticcmds (L35, L54).
+                if( num_cmds == 0 )  break;
+                num_cmds --;
                 // Use list of pid generated from cmd_player_mask.
                 byte pn = ticcmd_pid[j];
                 TicCmdCopy( &netcmd_p[pn], /*src*/ (ticcmd_t*) bufpos );
