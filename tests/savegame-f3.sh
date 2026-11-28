@@ -22,7 +22,10 @@
 #   - loads its own savegame and the state as loaded equals the state it was saved in, with the
 #     players' bob (the state hash holds it): a game without bots keeps the bob.
 # Join. An old server and a new client, and a new server and an old client, over UDP on loopback:
-#   the client says "Invalid savegame: wrong version" and does not start the game.
+#   the client does not start the game and says why: "Incompatible client" (the server refuses the other
+#   NETWORK_VERSION, 27 since F4, before any savegame is sent), or "Invalid savegame: wrong version" if a build
+#   that is not refused there (an old build with the version raised) gets the savegame. The savegame check
+#   itself is the -testload part above, which a join cannot reach between these two builds.
 #
 # Exit status: 0 if everything passed, 1 if not, 2 on bad set-up.
 set -uo pipefail
@@ -161,16 +164,16 @@ joinpair() {   # joinpair NAME SERVER_BIN CLIENT_BIN
 if [ "$join" = 1 ]; then
     echo "== a join between the old build and this build, over UDP on loopback"
     joinpair old-server "$old" "$native"
-    if grep -q 'Invalid savegame: wrong version' "$work/old-server/c/out.txt"; then
-        ok "new client, old server: $(grep -h 'Invalid savegame' "$work/old-server/c/out.txt" | head -1)"
+    if grep -q 'Invalid savegame: wrong version\|Incompatible client' "$work/old-server/c/out.txt" "$work/old-server/s/out.txt"; then
+        ok "new client, old server: $(grep -h 'Invalid savegame\|Incompatible client' "$work/old-server/c/out.txt" "$work/old-server/s/out.txt" | head -1)"
     else
-        bad "new client, old server: no 'wrong version' message: $(tail -3 "$work/old-server/c/out.txt" | tr '\n' '|')"
+        bad "new client, old server: no 'wrong version' message: $(tail -3 "$work/old-server/c/out.txt" "$work/old-server/s/out.txt" | tr '\n' '|')"
     fi
     joinpair new-server "$native" "$old"
-    if grep -q 'Invalid savegame: wrong version' "$work/new-server/c/out.txt"; then
-        ok "old client, new server: $(grep -h 'Invalid savegame' "$work/new-server/c/out.txt" | head -1)"
+    if grep -q 'Invalid savegame: wrong version\|Incompatible client' "$work/new-server/c/out.txt" "$work/new-server/s/out.txt"; then
+        ok "old client, new server: $(grep -h 'Invalid savegame\|Incompatible client' "$work/new-server/c/out.txt" "$work/new-server/s/out.txt" | head -1)"
     else
-        bad "old client, new server: no 'wrong version' message: $(tail -3 "$work/new-server/c/out.txt" | tr '\n' '|')"
+        bad "old client, new server: no 'wrong version' message: $(tail -3 "$work/new-server/c/out.txt" "$work/new-server/s/out.txt" | tr '\n' '|')"
     fi
 fi
 

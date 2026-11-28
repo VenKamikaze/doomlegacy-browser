@@ -4813,14 +4813,14 @@ boolean P_Savegame_Read_header( savegame_info_t * infop, byte read_netgame )
     if( sg_version > ((sg_portable)? SG_BOB_VERSION : MAX_READSAVE_VERSION) )  goto wrong;
     // Nothing writes the portable layout with another version than these.
     if( sg_portable && sg_version != DL_VERSION && sg_version != SG_BOB_VERSION )  goto wrong;
-    // A joining client has no bob to start from in an older savegame: the joiner's players
-    // would differ from the server's as soon as one has been walking (L53). Refuse it,
-    // with the message of any other version.
-    if( read_netgame && sg_version < SG_BOB_VERSION )  goto wrong;
     // A savegame of the old layout holds raw memory of the machine that
     // wrote it. It can only be read by the same kind of machine, which
     // a game that is joined cannot know.
     if( read_netgame && ! sg_portable )  goto old_layout;
+    // A joining client has no bob to start from in an older savegame: the joiner's players
+    // would differ from the server's as soon as one has been walking (L53). Refuse it,
+    // with the message of any other version.
+    if( read_netgame && sg_version < SG_BOB_VERSION )  goto wrong;
     reason = "endian";
     if( READBYTE( save_p ) != sg_big_endian )  goto wrong;
     reason = "padding";

@@ -70,8 +70,7 @@ d = sys.argv[1]
 def sect(b):
     i = b.rfind(b'\xfd\xf1')
     assert i > 0 and b.endswith(b'\xff\xfd\xfc'), "no bot state section"
-    cnt = b[i + 2 + 4]                   # players with a walking bob: 9 bytes each
-    rec = i + 2 + 4 + 1 + 9 * cnt        # after the marker, oksector and the bobs
+    rec = i + 2 + 4                      # after the marker and oksector (the walking bob is in the players' records since 10150)
     assert b[rec] < 32, "first record is not a player"
     nfield = rec + 1 + 7 * 4 + 8         # the path length
     return i, rec, nfield

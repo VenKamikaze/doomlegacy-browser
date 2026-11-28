@@ -216,16 +216,16 @@ joinpair() {   # joinpair NAME SERVER_BIN CLIENT_BIN
 if [ "$join" = 1 ]; then
     echo "== a join between the old build and the new build, over UDP on loopback"
     joinpair old-server "$old" "$native"
-    if grep -q 'not the portable layout' "$work/old-server/c/out.txt"; then
-        ok "new client, old server: $(grep -h 'Invalid savegame' "$work/old-server/c/out.txt" | head -1)"
+    if grep -q 'not the portable layout\|Incompatible client' "$work/old-server/c/out.txt" "$work/old-server/s/out.txt"; then
+        ok "new client, old server: $(grep -h 'Invalid savegame\|Incompatible client' "$work/old-server/c/out.txt" "$work/old-server/s/out.txt" | head -1)"
     else
-        bad "new client, old server: no message that the savegame is of an older build: $(tail -3 "$work/old-server/c/out.txt" | tr '\n' '|')"
+        bad "new client, old server: no message that the savegame is of an older build: $(tail -3 "$work/old-server/c/out.txt" "$work/old-server/s/out.txt" | tr '\n' '|')"
     fi
     joinpair new-server "$native" "$old"
-    if grep -q 'wrong version' "$work/new-server/c/out.txt"; then
-        ok "old client, new server: $(grep -h 'Invalid savegame' "$work/new-server/c/out.txt" | head -1)"
+    if grep -q 'wrong version\|Incompatible client' "$work/new-server/c/out.txt" "$work/new-server/s/out.txt"; then
+        ok "old client, new server: $(grep -h 'Invalid savegame\|Incompatible client' "$work/new-server/c/out.txt" "$work/new-server/s/out.txt" | head -1)"
     else
-        bad "old client, new server: no message that the savegame has a wrong version: $(tail -3 "$work/new-server/c/out.txt" | tr '\n' '|')"
+        bad "old client, new server: no message that the savegame has a wrong version: $(tail -3 "$work/new-server/c/out.txt" "$work/new-server/s/out.txt" | tr '\n' '|')"
     fi
 fi
 

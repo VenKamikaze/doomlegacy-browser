@@ -4661,6 +4661,8 @@ static void client_join_handler( byte nnode )
     if( netbuffer->u.clientcfg.version != VERSION
         || LE_SWAP32(netbuffer->u.clientcfg.subversion) != NETWORK_VERSION)
     {
+        GenPrintf( EMSG_warn, "Incompatible client: legacy %i net %i, this is legacy %i net %i\n",
+                   netbuffer->u.clientcfg.version, LE_SWAP32(netbuffer->u.clientcfg.subversion), VERSION, NETWORK_VERSION );
         SV_Send_Refuse(nnode,
            // Text is automatically centered, must not be too long.
            va("Incompatible client\nServer %i Net %i\nLegacy %i Net %i",
@@ -4848,6 +4850,7 @@ static void server_refuse_handler( byte nnode )
 {
     if( cl_mode == CLM_wait_join_response )
     {
+        GenPrintf( EMSG_warn, "Server %i refuses connection: %s\n", nnode, netbuffer->u.stringpak.str );
         M_SimpleMessage(va("Server %i refuses connection\n\nReason :\n%s",
                            nnode,
                            netbuffer->u.stringpak.str));

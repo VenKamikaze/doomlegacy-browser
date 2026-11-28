@@ -4,8 +4,8 @@
 
 global-buffer-overflow p_enemy.c:504 in CV_monster_OnChange L26
 global-buffer-overflow r_segs.c:2448 in R_RenderSegLoop L8
-ubsan g_game.c:2206:17 left shift of negative value N L10
 ubsan g_game.c:2207:17 left shift of negative value N L10
+ubsan g_game.c:2208:17 left shift of negative value N L10
 ubsan i_system.c:578:68 left shift of negative value N L10
 ubsan p_enemy.c:2377:27 left shift of N by N places cannot be represented in type 'int' L10
 ubsan p_enemy.c:2378:48 left shift of N by N places cannot be represented in type 'int' L10
@@ -27,15 +27,15 @@ ubsan p_mobj.c:3483:41 left shift of negative value N L10
 ubsan p_pspr.c:1037:46 left shift of negative value N L10
 ubsan p_pspr.c:848:57 left shift of negative value N L10
 ubsan p_pspr.c:878:59 left shift of negative value N L10
-ubsan p_saveg.c:1090:69 left shift of negative value N L10
-ubsan p_saveg.c:1107:69 left shift of negative value N L10
-ubsan p_saveg.c:2414:53 left shift of negative value N L10
-ubsan p_saveg.c:2415:56 left shift of negative value N L10
-ubsan p_saveg.c:2873:51 left shift of negative value N L10
-ubsan p_saveg.c:2874:51 left shift of negative value N L10
-ubsan p_saveg.c:4520:37 left shift of N by N places cannot be represented in type 'int' L10
-ubsan p_saveg.c:987:59 left shift of negative value N L10
-ubsan p_saveg.c:989:63 left shift of negative value N L10
+ubsan p_saveg.c:1111:69 left shift of negative value N L10
+ubsan p_saveg.c:1128:69 left shift of negative value N L10
+ubsan p_saveg.c:2435:53 left shift of negative value N L10
+ubsan p_saveg.c:2436:56 left shift of negative value N L10
+ubsan p_saveg.c:2894:51 left shift of negative value N L10
+ubsan p_saveg.c:2895:51 left shift of negative value N L10
+ubsan p_saveg.c:4532:37 left shift of N by N places cannot be represented in type 'int' L10
+ubsan p_saveg.c:1008:59 left shift of negative value N L10
+ubsan p_saveg.c:1010:63 left shift of negative value N L10
 ubsan p_setup.c:1227:56 left shift of negative value N L10
 ubsan p_setup.c:1228:48 left shift of negative value N L10
 ubsan p_setup.c:367:33 left shift of negative value N L10
