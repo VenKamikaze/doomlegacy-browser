@@ -169,12 +169,15 @@ sleep 1
 s_alive=1; c_alive=1
 kill -0 "$spid" 2>/dev/null || s_alive=0
 kill -0 "$cpid" 2>/dev/null || c_alive=0
+# The files as they are while both games run: a game that is told to quit takes one more record after
+# it has left the level (the title screen: its three world words are 0), which is not game state.
+cp "$work/c/c.bin" "$work/c/c.run" 2>/dev/null; cp "$work/s/s.bin" "$work/s/s.run" 2>/dev/null
 for p in "$cpid" "$spid"; do kill -TERM "$p" 2>/dev/null; done
 sleep 2
 for p in "$cpid" "$spid"; do kill -KILL "$p" 2>/dev/null; done
 wait 2>/dev/null
 
-sn="$(tics "$work/s/s.bin")"; cn="$(tics "$work/c/c.bin")"
+sn="$(tics "$work/s/s.run")"; cn="$(tics "$work/c/c.run")"
 echo "server file: $sn records; client file: $cn records"
 check "the server was still running at the end" $((1 - s_alive))
 check "the client was still running at the end" $((1 - c_alive))
@@ -184,16 +187,16 @@ if [ "$together" = 0 ] && [ "$force" = 1 ]; then
 fi
 check "the client played at least $play s of tics ($cn >= $need)" $([ "$cn" -ge "$need" ] && echo 0 || echo 1)
 if [ "$cn" -gt 0 ] && [ "$sn" -gt 0 ]; then
-    first="$(python3 -I "$root/tests/tools/testdump-diff.py" --info "$work/c/c.bin")"
+    first="$(python3 -I "$root/tests/tools/testdump-diff.py" --info "$work/c/c.run")"
     echo "client: $first"
-    slast="$(python3 -I "$root/tests/tools/testdump-diff.py" --info "$work/s/s.bin" | sed 's/.*\.\.//')"
+    slast="$(python3 -I "$root/tests/tools/testdump-diff.py" --info "$work/s/s.run" | sed 's/.*\.\.//')"
     clast="$(printf '%s' "$first" | sed 's/.*\.\.//')"
     check "the server kept running: its last tic $slast >= the client's last tic $clast minus 5" \
         $([ "${slast:-0}" -ge $(( ${clast:-0} - 5 )) ] && echo 0 || echo 1)
-    res="$(python3 -I "$root/tests/tools/testdump-diff.py" --common "$work/s/s.bin" "$work/c/c.bin")"; rc=$?
+    res="$(python3 -I "$root/tests/tools/testdump-diff.py" --common "$work/s/s.run" "$work/c/c.run")"; rc=$?
     echo "  compare: $res"
     check "every tic both files have is identical" $rc
-    act="$(python3 -I - "$work/c/c.bin" <<'PY'
+    act="$(python3 -I - "$work/c/c.run" <<'PY'
 import struct, sys
 d = open(sys.argv[1], 'rb').read()
 r = [struct.unpack_from('<7I', d, i) for i in range(0, len(d), 28)]
