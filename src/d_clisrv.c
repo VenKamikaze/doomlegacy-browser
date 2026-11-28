@@ -6134,6 +6134,7 @@ error_ret:
 static void SV_Send_Tic_Update( int count )
 {
     byte nn;
+    tic_t hold;  // the lowest tic that a node still has to be sent, or is going to be
 
     // Find lowest tic, over all nodes.
     next_tic_send = gametic;
@@ -6147,15 +6148,28 @@ static void SV_Send_Tic_Update( int count )
         }
     }
 
+    // A node that is joining (SV_AddNode: nettics is the tic of its savegame) gets the tics
+    // from there on, once it is a client, text commands included. They must not be erased
+    // or written over before: the pause of the join and a player's chat are among them (L31).
+    hold = next_tic_send;
+    for( nn=0; nn<MAXNETNODES; nn++)
+    {
+        if( (nnode_state[nn] > NOS_recognized) && (nnode_state[nn] <= NOS_join_timeout)
+            && (nettics[nn] < hold) )
+        {
+           hold = nettics[nn];
+        }
+    }
+
     // Don't erase tics not acknowledged
-    if( (maketic+count) >= (next_tic_send+BACKUPTICS) )
-        count = (next_tic_send+BACKUPTICS) - maketic - 1;
+    if( (maketic+count) >= (hold+BACKUPTICS) )
+        count = (hold+BACKUPTICS) - maketic - 1;
 
     while( count-- > 0 )
         SV_Maketic();  // create missed tics and increment maketic
 
     // clear only when acknowledged
-    for( ; next_tic_clear<next_tic_send; next_tic_clear++)
+    for( ; next_tic_clear<hold; next_tic_clear++)
         D_Clear_ticcmd(next_tic_clear);  // clear the maketic the new tic
 
     SV_Send_Tics();
