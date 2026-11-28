@@ -1777,32 +1777,24 @@ static void
 // By Server
 static byte  state_seq = 0;  // sequence number of PT_STATE
 
-// A change that is to take effect at a later gametic than the server's now, as the network
-// wait's pause and unpause do: PT_STATE_SCHEDULED in server_pause. The random state in the
-// packet is then not the state of that gametic, and the client does not take it.
-#define PT_STATE_SCHEDULED  0x80
-static void SV_Send_State_At( tic_t at_tic, byte server_pause )
+void SV_Send_State( byte server_pause )
 {
     netbuffer->packettype=PT_STATE;
-    write_N32( & netbuffer->u.state.gametic, at_tic );
+    write_N32( & netbuffer->u.state.gametic, gametic );
     get_random_state( & netbuffer->u.state.rs ); // to sync P_Random
-    if( at_tic != gametic )  server_pause |= PT_STATE_SCHEDULED;
     netbuffer->u.state.server_pause = server_pause;
     netbuffer->u.state.seq = ++state_seq;  // the order of sending, for the client (L31)
 
     SV_SendPacket_All( SP_reliable, sizeof(state_pak_t), NULL );
 }
 
-void SV_Send_State( byte server_pause )
-{
-    SV_Send_State_At( gametic, server_pause );
-}
-
-// A pause or unpause by the server's network wait (SV_network_wait_timer,
-// SV_network_wait_handler) takes effect at the server's gametic, which
-// PT_STATE carries. The client may receive it a tic or more before it gets
+// A pause or unpause by PT_STATE takes effect at the server's gametic, which PT_STATE
+// carries. The client may receive it a tic or more before it gets
 // there, as when it has just loaded the savegame of a join, and then it must
 // keep running the tics before that gametic in the old state, as the server did.
+// (The network wait's pause for a join in progress is not sent in PT_STATE since F4,
+// see XD_NETWAIT: a PT_STATE can be late or lost, and a client that has run the tic by
+// then is out of step.)
 //
 // d_net.c hands on reliable packets in the order they arrive, which on a lossy or
 // jittery link is not the order the server sent them (L31). Each PT_STATE therefore
@@ -1942,11 +1934,9 @@ static void state_handler( void )
     byte nnode = doomcom->remotenode;
     byte seq;
     byte value = netbuffer->u.state.server_pause;
-    boolean scheduled = (value & PT_STATE_SCHEDULED) != 0;
 
     // Message is PT_STATE
     tic_t serv_gametic = read_N32( & netbuffer->u.state.gametic );
-    value &= ~PT_STATE_SCHEDULED;
     // A sender from before F4 does not send the sequence number (the packet is a byte
     // shorter): take them in the order they arrive, as it was.
     if( doomcom->datalength >= PACKET_BASE_SIZE + sizeof(state_pak_t) )
@@ -1961,7 +1951,7 @@ static void state_handler( void )
         // Gametic cannot be fixed directly, need game commands.        
         // It may just be behind by a tic or two.
     }
-    else if( ! scheduled )
+    else
     {
         // Update the random generators.
         random_state_checkset( & netbuffer->u.state.rs, "PT_STATE", RSC_client_set ); // to sync P_Random
@@ -1984,17 +1974,15 @@ static void state_handler( void )
 static uint16_t  network_wait_timer = 0;
 static byte      network_wait_pause = 0;
 
-// The wait's pause and unpause are announced to the clients in PT_STATE, a packet of its own,
-// for a gametic, and a client that has run that tic before the packet came is out of step:
-// it runs a tic paused that the server ran unpaused, or the other way round (L31; the server's
-// joins pause and unpause within a tic, and a client that has caught up with the server, or a
-// packet that is late or must be sent again, does it). So both take effect NETWORK_WAIT_LEAD
-// tics after the server decided on them, and the PT_STATE names that tic: the client has the
-// change before it gets there and orders it with the others by (gametic, sequence).
-// The joiner does not depend on the pause: it is sent tics from the savegame's on.
-#define NETWORK_WAIT_LEAD  10
-static tic_t  network_wait_pause_at = 0;    // the gametic the server's own pause starts at, 0 = none
-static tic_t  network_wait_unpause_at = 0;  // the gametic the server's own pause ends at, 0 = none yet
+// The wait's pause and unpause go to every machine, the server too, in the tic stream, as the
+// net command XD_NETWAIT, and are executed at the same tic by all (ExtraDataTicker, after the
+// tic: the pause starts with the next one). A PT_STATE, a packet of its own for a gametic, could
+// come after a client had run that tic, because the client had caught up with the server, or the
+// packet was late or lost and sent again, and the client was then out of step: it ran a tic
+// paused that the server ran unpaused, or the other way round (L31; the pause and unpause of a join
+// are often for the same gametic). A client cannot run a tic without its text commands, so it
+// stalls instead. The joiner is sent the tics from the savegame's on and so gets them too.
+// network_wait_pause is the server's own record that a wait is on, and what `paused` was before it.
 
 // Server
 //  wait_timeout : wait timeout in ticks
@@ -2005,36 +1993,26 @@ void  SV_network_wait_timer( uint16_t wait_timeout )
     if( ! network_wait_pause )
     {
         // save pause state, and network pause state
-        network_wait_pause = paused | NETWORK_WAIT_ACTIVE_FLAG;
-        if( ! paused )
-        {
-            // All clients except the server.
-            network_wait_pause_at = gametic + NETWORK_WAIT_LEAD;
-            SV_Send_State_At( network_wait_pause_at, 1 );  // pause game, then
-        }
+        // (the bit of an earlier wait whose unpause has not been executed yet is not the state)
+        byte was = paused & ~NETWORK_WAIT_ACTIVE_FLAG;
+        network_wait_pause = was | NETWORK_WAIT_ACTIVE_FLAG;
+        if( ! was )
+            SV_Send_NetXCmd( XD_NETWAIT, &network_wait_pause, 1 );  // pause everybody, with the next tic
         else
-        {
-            paused = network_wait_pause;
-        }
-        network_wait_unpause_at = 0;
+            paused = network_wait_pause;  // paused already: nothing changes for anybody
     }
 }
 
-// Server. Called before each tic is run: the server's own pause and unpause, at their gametic.
-static void SV_network_wait_ticker( void )
+// Xcmd XD_NETWAIT
+// Sent by the server to everybody, the server included.
+static
+void Got_NetXCmd_NetWait( xcmd_t * xc )
 {
-    if( network_wait_pause_at && gametic >= network_wait_pause_at )
-    {
-        paused = network_wait_pause;
-        network_wait_pause_at = 0;
-    }
-    if( network_wait_unpause_at && gametic >= network_wait_unpause_at )
-    {
-        paused &= ~NETWORK_WAIT_ACTIVE_FLAG;
-        network_wait_pause = 0;
-        network_wait_timer = 0;
-        network_wait_unpause_at = 0;
-    }
+    // Format: XD_NETWAIT
+    //  byte:  the value of paused
+    paused = READBYTE(xc->curpos);
+    if( testdump_active )
+        GenPrintf( EMSG_warn, "TEST: pause %d applied at gametic %u (network wait, in the tic stream)\n", paused, (unsigned) gametic );
 }
 
 // Server
@@ -2089,20 +2067,17 @@ keep_waiting:
     return;
 
 unpause_game:
-    if( network_wait_unpause_at )  return;  // announced, the ticker ends it
     if( TestDump_UnpauseDelay( gametic ) )  // test-only: stay paused a few tics longer
         return;
     if( network_wait_pause == NETWORK_WAIT_ACTIVE_FLAG )  // originally was not paused
     {
-        // All clients except the server. Never before the pause it ends.
-        network_wait_unpause_at = gametic + NETWORK_WAIT_LEAD;
-        if( network_wait_unpause_at < network_wait_pause_at )
-            network_wait_unpause_at = network_wait_pause_at;
-        SV_Send_State_At( network_wait_unpause_at, 0 );  // unpause the game, then
-        return;
+        byte off = 0;
+        SV_Send_NetXCmd( XD_NETWAIT, &off, 1 );  // unpause everybody, with the next tic
     }
-    // it was paused already: nothing changes for the clients
-    paused &= ~NETWORK_WAIT_ACTIVE_FLAG;
+    else
+    {
+        paused &= ~NETWORK_WAIT_ACTIVE_FLAG;  // was paused already: nothing changes for anybody
+    }
     network_wait_pause = 0;
     network_wait_timer = 0;
     return;
@@ -3889,6 +3864,7 @@ void D_Init_ClientServer (void)
     Register_NetXCmd(XD_KICK, Got_NetXCmd_KickCmd);
     Register_NetXCmd(XD_ADDPLAYER, Got_NetXCmd_AddPlayer);
     Register_NetXCmd(XD_ADDBOT, Got_NetXCmd_AddBot);	//added by AC for acbot
+    Register_NetXCmd(XD_NETWAIT, Got_NetXCmd_NetWait);  // F4
 
     CV_RegisterVar (&cv_allownewplayer);
     CV_RegisterVar (&cv_maxplayers);
@@ -4536,7 +4512,9 @@ void SV_Add_game_start_waiting_players( byte mode )
         return;
 
     // Update gametic and random state.
-    SV_Send_State( paused | network_wait_pause );
+    // (paused has the network wait's bit when its pause has begun; one that is announced for a
+    // later tic has not, and the clients get it with its tic)
+    SV_Send_State( paused );
     SendPacket( BROADCAST_NODE, PT_REQ_CLIENTCFG );  // req all nodes to send client cfg
     B_Send_all_bots_NameColor();  // Bot NameColor to everybody, by NetXCmd
 
@@ -6103,7 +6081,6 @@ void TryRunTics (tic_t realtics)
                 D_Clear_ticcmd( gametic );
             }
 
-            if( server )  SV_network_wait_ticker();
             CL_Apply_Pending_Pause();
             G_Ticker ();
             ExtraDataTicker();  // execute NetXCmd

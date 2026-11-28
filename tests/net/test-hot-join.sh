@@ -29,9 +29,9 @@
 # Pass when:
 #   - both instances were still running when the script stopped them;
 #   - the client's file starts at the join tic and holds at least --play seconds of tics;
-#   - the join race is forced (the server keeps its pause 5 tics longer, -testunpausedelay 5, so the
-#     unpause it announces names a later tic than the client has reached) and the client log shows the
-#     pending pause applied at the server's tic ("TEST: pause N applied at gametic ...");
+#   - the join's pause is long enough to see (the server keeps it 5 tics longer, -testunpausedelay 5) and
+#     the client log shows the pause and the unpause executed in the tic stream, as the server did
+#     ("TEST: pause N applied at gametic ...");
 #   - every tic that both files have is identical (tests/tools/testdump-diff.py --common);
 #   - the server kept running the whole time (its last tic is within 5 of the client's);
 #   - the game was not idle: the client's files shows the P_Random index moving (monsters
@@ -182,7 +182,7 @@ echo "server file: $sn records; client file: $cn records"
 check "the server was still running at the end" $((1 - s_alive))
 check "the client was still running at the end" $((1 - c_alive))
 if [ "$together" = 0 ] && [ "$force" = 1 ]; then
-    check "the client applied a pending pause change at the server's tic (the race of L21 was forced)" \
+    check "the client executed the join's pause in the tic stream (kept 5 tics longer by -testunpausedelay)" \
         $(grep -q "TEST: pause [0-9]* applied at gametic" "$work/c/out.txt" && echo 0 || echo 1)
 fi
 check "the client played at least $play s of tics ($cn >= $need)" $([ "$cn" -ge "$need" ] && echo 0 || echo 1)

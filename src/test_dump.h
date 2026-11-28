@@ -17,8 +17,9 @@ void TestDump_Init( void );
 void TestDump_Tic( void );
 
 // Test-only -testunpausedelay N (server): after the clients are ready, the server's
-// network wait pause lasts N more gametics, so that its unpause names a later gametic
-// than a joining client has reached (the race of bugs.md L21). Returns true while
+// network wait pause lasts N more gametics (it made the race of bugs.md L21, an unpause for a
+// later gametic than a joining client had reached, before the pause went in the tic stream,
+// L31; now it only makes the pause last). Returns true while
 // it should still wait. Always false without the option.
 int TestDump_UnpauseDelay( unsigned int now );
 
